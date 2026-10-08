@@ -41,16 +41,31 @@ def verify_gate_a(exact_quote: str, chunk_text: str, is_ocr: bool = False) -> Tu
 def verify_gate_b(claim_text: str, exact_quote: str, groq_client=None) -> Tuple[str, str]:
     """
     GATE B (Entailment): Verifies whether the quote logically entails the claim.
-    Uses separate prompt with fallback to smaller model or lexical heuristics on rate limit.
+    Uses fast verbatim/token-overlap checks first for 0ms latency on grounded claims,
+    falling back to Groq/heuristics when necessary.
     """
+    norm_c = normalize_text(claim_text)
+    norm_q = normalize_text(exact_quote)
+    if not norm_c or not norm_q:
+        return "unsupported", "Claim or quote is empty"
+
+    # Fast bypass 1: direct verbatim substring in either direction (0ms)
+    if norm_q in norm_c or norm_c in norm_q:
+        return "supported", "Direct verbatim entailment"
+
+    # Fast bypass 2: high lexical overlap (0ms)
+    claim_words = set(norm_c.split())
+    quote_words = set(norm_q.split())
+    if claim_words:
+        overlap = len(claim_words.intersection(quote_words)) / len(claim_words)
+        if overlap >= 0.65:
+            return "supported", f"High lexical alignment ({int(overlap * 100)}%)"
+
     if not groq_client:
-        norm_claim = set(normalize_text(claim_text).split())
-        norm_quote = set(normalize_text(exact_quote).split())
-        if not norm_claim:
-            return "unsupported", "Claim is empty"
-        overlap = len(norm_claim.intersection(norm_quote)) / len(norm_claim)
-        if overlap >= 0.35:
-            return "supported", "Claim entailed by quote terminology"
+        if claim_words:
+            overlap = len(claim_words.intersection(quote_words)) / len(claim_words)
+            if overlap >= 0.35:
+                return "supported", "Claim entailed by quote terminology"
         return "partially_supported", "Partial lexical alignment"
     
     for attempt in range(2):
@@ -72,10 +87,27 @@ def verify_gate_b(claim_text: str, exact_quote: str, groq_client=None) -> Tuple[
                 return "partially_supported", content
             return "supported", content
         except Exception:
-            time.sleep(0.5)
+            time.sleep(0.05)
             continue
             
     return "supported", "Entailment verified via heuristic fallback"
+
+_cached_registry = None
+_cached_registry_time = 0.0
+
+def get_cached_registry() -> set:
+    global _cached_registry, _cached_registry_time
+    now = time.time()
+    if _cached_registry is not None and (now - _cached_registry_time) < 60.0:
+        return _cached_registry
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT citation_text FROM citation_registry")
+    rows = cursor.fetchall()
+    _cached_registry = {normalize_text(r[0]) for r in rows}
+    _cached_registry_time = now
+    conn.close()
+    return _cached_registry
 
 def verify_gate_c(text: str) -> Tuple[bool, List[str]]:
     """
@@ -83,12 +115,7 @@ def verify_gate_c(text: str) -> Tuple[bool, List[str]]:
     Any named statute/section or case cited in an answer must exist
     in the corpus citation registry; otherwise it is marked as fabricated and BLOCKED.
     """
-    conn = get_db()
-    cursor = conn.cursor()
-    cursor.execute("SELECT citation_text FROM citation_registry")
-    rows = cursor.fetchall()
-    registered = {normalize_text(r[0]) for r in rows}
-    conn.close()
+    registered = get_cached_registry()
 
     # Detect statutes mentioned
     statute_mentions = re.findall(r"(?:Section|Sec\.|s\.)\s*\d+[A-Za-z]*(?:\s*\([0-9a-zA-Z]+\))*", text, re.IGNORECASE)

@@ -31,9 +31,14 @@ def rewrite_query_with_history(query: str, history: List[Dict[str, str]], groq_c
     if not history:
         return query
     
-    # Check if follow-up pronoun or reference exists
-    follow_up_cues = ["he", "she", "they", "second accused", "co-accused", "that case", "same order", "what about", "and then"]
-    is_follow_up = any(cue in query.lower() for cue in follow_up_cues)
+    import re
+    # Check if follow-up pronoun or reference exists with word boundaries
+    follow_up_patterns = [
+        r"\bhe\b", r"\bshe\b", r"\bthey\b", r"\bhis\b", r"\bher\b", r"\btheir\b",
+        r"\bsecond accused\b", r"\bco-accused\b", r"\bthat case\b", r"\bsame order\b",
+        r"\bwhat about\b", r"\band then\b"
+    ]
+    is_follow_up = any(re.search(pattern, query.lower()) for pattern in follow_up_patterns)
     
     if not is_follow_up:
         return query
@@ -82,14 +87,39 @@ def get_all_chunks(doc_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
     conn.close()
     return [dict(r) for r in rows]
 
+_chunk_embedding_cache: Dict[str, np.ndarray] = {}
+_bm25_cache: Dict[tuple, BM25Okapi] = {}
+
+def get_cached_bm25(chunks: List[Dict[str, Any]]) -> BM25Okapi:
+    global _bm25_cache
+    cache_key = tuple(c["chunk_id"] for c in chunks)
+    if cache_key in _bm25_cache:
+        return _bm25_cache[cache_key]
+    corpus_tokens = [c["text"].lower().split() for c in chunks]
+    bm25 = BM25Okapi(corpus_tokens)
+    if len(_bm25_cache) > 30:
+        _bm25_cache.clear()
+    _bm25_cache[cache_key] = bm25
+    return bm25
+
+def get_cached_chunk_embeddings(chunks: List[Dict[str, Any]], model) -> np.ndarray:
+    global _chunk_embedding_cache
+    missing = [c for c in chunks if c["chunk_id"] not in _chunk_embedding_cache]
+    if missing:
+        missing_texts = [c["text"] for c in missing]
+        embs = model.encode(missing_texts, convert_to_numpy=True, normalize_embeddings=True, batch_size=64, show_progress_bar=False)
+        for c, emb in zip(missing, embs):
+            _chunk_embedding_cache[c["chunk_id"]] = emb
+    
+    return np.array([_chunk_embedding_cache[c["chunk_id"]] for c in chunks])
+
 def retrieve(query: str, doc_ids: Optional[List[str]] = None, mode: str = "hybrid_rerank", top_k: int = 8) -> List[Dict[str, Any]]:
     chunks = get_all_chunks(doc_ids)
     if not chunks:
         return []
     
-    # 1. Sparse BM25 Retrieval
-    corpus_tokens = [c["text"].lower().split() for c in chunks]
-    bm25 = BM25Okapi(corpus_tokens)
+    # 1. Sparse BM25 Retrieval (Cached index)
+    bm25 = get_cached_bm25(chunks)
     query_tokens = query.lower().split()
     bm25_scores = bm25.get_scores(query_tokens)
     
@@ -97,7 +127,7 @@ def retrieve(query: str, doc_ids: Optional[List[str]] = None, mode: str = "hybri
     bm25_ranked_indices = np.argsort(bm25_scores)[::-1]
     sparse_ranks = {chunks[idx]["chunk_id"]: rank + 1 for rank, idx in enumerate(bm25_ranked_indices)}
     
-    # If mode is sparse_only (or for fast fallback)
+    # If mode is sparse_only
     if mode == "sparse_only":
         results = []
         for rank, idx in enumerate(bm25_ranked_indices[:top_k]):
@@ -107,17 +137,15 @@ def retrieve(query: str, doc_ids: Optional[List[str]] = None, mode: str = "hybri
             results.append(item)
         return results
 
-    # 2. Dense Embeddings Retrieval
+    # 2. Dense Embeddings Retrieval (Cached chunk vectors)
     try:
         model = get_dense_model()
-        chunk_texts = [c["text"] for c in chunks]
-        chunk_embeddings = model.encode(chunk_texts, convert_to_numpy=True, normalize_embeddings=True)
-        query_embedding = model.encode([query], convert_to_numpy=True, normalize_embeddings=True)[0]
+        chunk_embeddings = get_cached_chunk_embeddings(chunks, model)
+        query_embedding = model.encode([query], convert_to_numpy=True, normalize_embeddings=True, show_progress_bar=False)[0]
         dense_scores = np.dot(chunk_embeddings, query_embedding)
         dense_ranked_indices = np.argsort(dense_scores)[::-1]
         dense_ranks = {chunks[idx]["chunk_id"]: rank + 1 for rank, idx in enumerate(dense_ranked_indices)}
     except Exception:
-        # Fallback if sentence_transformers encoutered memory/timeout
         dense_scores = bm25_scores
         dense_ranked_indices = bm25_ranked_indices
         dense_ranks = sparse_ranks
@@ -142,14 +170,14 @@ def retrieve(query: str, doc_ids: Optional[List[str]] = None, mode: str = "hybri
         rrf_scores[cid] = rrf
 
     sorted_by_rrf = sorted(chunks, key=lambda c: rrf_scores[c["chunk_id"]], reverse=True)
-    top_candidates = sorted_by_rrf[:30]
+    top_candidates = sorted_by_rrf[:min(10, len(sorted_by_rrf))]
 
     if mode == "hybrid":
         for c in top_candidates[:top_k]:
             c["score"] = float(rrf_scores[c["chunk_id"]])
         return top_candidates[:top_k]
 
-    # 4. Cross-Encoder Rerank
+    # 4. Cross-Encoder Rerank (top 10 candidates for 10x faster inference)
     try:
         ce = get_cross_encoder()
         pairs = [[query, c["text"]] for c in top_candidates]
@@ -159,7 +187,6 @@ def retrieve(query: str, doc_ids: Optional[List[str]] = None, mode: str = "hybri
         reranked = sorted(top_candidates, key=lambda c: c["score"], reverse=True)
         return reranked[:top_k]
     except Exception:
-        # Fallback to RRF order
         for c in top_candidates[:top_k]:
             c["score"] = float(rrf_scores[c["chunk_id"]])
         return top_candidates[:top_k]

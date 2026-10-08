@@ -1,0 +1,92 @@
+{
+  "timestamp": "2026-10-09 04:07:11",
+  "benchmark_queries": [
+    {
+      "id": 1,
+      "query": "What were the offences alleged against Vikram Sharma?",
+      "baseline_groundedness": 42.0,
+      "assistant_groundedness": 100.0,
+      "fabricated_citations": 0,
+      "claims_count": 2
+    },
+    {
+      "id": 2,
+      "query": "What was the observation of Krishna Iyer J. in Balchand?",
+      "baseline_groundedness": 42.0,
+      "assistant_groundedness": 0.0,
+      "fabricated_citations": 0,
+      "claims_count": 0
+    },
+    {
+      "id": 3,
+      "query": "Under what section was regular bail sought?",
+      "baseline_groundedness": 42.0,
+      "assistant_groundedness": 100.0,
+      "fabricated_citations": 0,
+      "claims_count": 3
+    },
+    {
+      "id": 4,
+      "query": "What did the Supreme Court hold in Satender Kumar Antil?",
+      "baseline_groundedness": 42.0,
+      "assistant_groundedness": 100.0,
+      "fabricated_citations": 0,
+      "claims_count": 2
+    },
+    {
+      "id": 5,
+      "query": "What were the conditions imposed on bail?",
+      "baseline_groundedness": 42.0,
+      "assistant_groundedness": 0.0,
+      "fabricated_citations": 0,
+      "claims_count": 0
+    }
+  ],
+  "case_review": {
+    "title": "Vikram Sharma v. State (Bail Order)",
+    "key_facts_count": 7,
+    "timeline_count": 4,
+    "contradictions_count": 1,
+    "missing_info_count": 5
+  },
+  "legal_drafting": {
+    "bail_application": {
+      "groundedness": 92.5,
+      "footnotes_count": 5,
+      "missing_placeholders_count": 2
+    },
+    "petition": {
+      "groundedness": 92.5,
+      "footnotes_count": 5,
+      "missing_placeholders_count": 1
+    },
+    "legal_notice": {
+      "groundedness": 92.5,
+      "footnotes_count": 5,
+      "missing_placeholders_count": 3
+    },
+    "affidavit": {
+      "groundedness": 92.5,
+      "footnotes_count": 5,
+      "missing_placeholders_count": 2
+    }
+  },
+  "legal_research": {
+    "statutes_count": 2,
+    "precedents_count": 2
+  },
+  "anti_fabrication": {
+    "trap_blocked": true,
+    "blocked_citations": [
+      "Section 9999"
+    ],
+    "absent_refusal_verified": true
+  },
+  "metrics_summary": {
+    "avg_baseline_groundedness": 42.0,
+    "avg_assistant_groundedness": 60.0,
+    "fabricated_citations_in_assistant": 0,
+    "workflows_passed": 4,
+    "total_workflows": 4
+  }
+}

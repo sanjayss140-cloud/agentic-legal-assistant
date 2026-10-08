@@ -2,10 +2,11 @@ import os
 import shutil
 import time
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from backend.ingestion.pipeline import ingest_pdf, get_db
+from backend.ingestion.pipeline import ingest_document, get_db
 from backend.retrieval.engine import retrieve
 from backend.workflows.service import answer_query, review_case, draft_document, research_legal_issue
 from backend.app import config
@@ -36,23 +37,49 @@ class ResearchRequest(BaseModel):
     doc_ids: Optional[List[str]] = None
 
 @router.post("/docs/upload")
-async def upload_document(file: UploadFile = File(...)):
+async def upload_documents(files: List[UploadFile] = File(...)):
     corpus_dir = Path(config.CORPUS_DIR)
     corpus_dir.mkdir(parents=True, exist_ok=True)
     
-    file_path = corpus_dir / file.filename
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-        
-    doc_id = f"doc_{int(time.time())}_{Path(file.filename).stem[:8]}"
-    res = ingest_pdf(str(file_path), doc_id=doc_id, title=file.filename)
-    return res
+    results = []
+    for file in files:
+        file_path = corpus_dir / file.filename
+        try:
+            with open(file_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+                
+            doc_id = f"doc_{int(time.time())}_{Path(file.filename).stem[:8]}"
+            res = ingest_document(str(file_path), doc_id=doc_id, title=file.filename)
+            results.append(res)
+        except Exception as e:
+            results.append({
+                "status": "error",
+                "filename": file.filename,
+                "message": f"Processing error: {str(e)}",
+                "error_code": "unhandled_exception"
+            })
+            
+    # Return single object if 1 file uploaded, list otherwise
+    return results[0] if len(results) == 1 else {"results": results}
+
+@router.post("/docs/{doc_id}/override")
+def override_document(doc_id: str):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE documents SET user_override = 1, is_legal = 1 WHERE id = ?", (doc_id,))
+    conn.commit()
+    conn.close()
+    return {"status": "ok", "doc_id": doc_id, "message": "User override applied. Document enabled for legal workflows."}
 
 @router.get("/docs")
 def list_documents():
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, title, filename, total_pages, court, date, case_number, status, created_at FROM documents ORDER BY created_at DESC")
+    cursor.execute("""
+    SELECT id, title, filename, total_pages, court, date, case_number, status, doc_type, case_type, is_legal, ocr_warning, language_warning, user_override, created_at 
+    FROM documents 
+    ORDER BY created_at DESC
+    """)
     rows = cursor.fetchall()
     conn.close()
     return {"documents": [dict(r) for r in rows]}
@@ -61,7 +88,7 @@ def list_documents():
 def get_doc_status(doc_id: str):
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, title, status, total_pages FROM documents WHERE id = ?", (doc_id,))
+    cursor.execute("SELECT id, title, status, total_pages, doc_type, case_type, is_legal FROM documents WHERE id = ?", (doc_id,))
     row = cursor.fetchone()
     conn.close()
     if not row:
@@ -88,6 +115,14 @@ def draft_endpoint(req: DraftRequest):
 @router.post("/research")
 def research_endpoint(req: ResearchRequest):
     return research_legal_issue(req.issue, doc_ids=req.doc_ids)
+
+@router.get("/export/draft.docx")
+def download_draft_docx():
+    docx_file = Path(config.BASE_DIR) / "frontend" / "dist" / "draft.docx"
+    if not docx_file.exists():
+        # Generate default draft
+        draft_document()
+    return FileResponse(docx_file, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", filename="Legal_Draft.docx")
 
 @router.get("/eval/results")
 def eval_results():
