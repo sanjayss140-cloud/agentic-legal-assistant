@@ -1,10 +1,10 @@
-# LexGround - Implementation & Test Progress Tracker
+# Agentic Legal Assistant - Implementation & Test Progress Tracker
 
 ## Project Overview
-- **Project**: LexGround (HNX26EPS01 Agentic Legal Assistant)
+- **Project**: Agentic Legal Assistant (HNX26EPS01 Agentic Legal Assistant)
 - **Mission**: An agentic legal assistant where every fact and every citation is verifiable. Verifiability beats fluency.
 - **Rules**: R1-R8 strictly applied.
-- **Directory**: `C:\Users\Sanjay\.gemini\antigravity\scratch\lexground`
+- **Directory**: `C:\Users\Sanjay\.gemini\antigravity\scratch\legal-assistant`
 
 ---
 
@@ -25,7 +25,7 @@
   - Pytest tests in `backend/tests/test_health.py`
 - **Acceptance Tests**:
   - [x] **T0.1**: `run` command / `uvicorn` starts the backend on localhost:8000.
-  - [x] **T0.2**: `GET /health` returns `{"status":"ok", "app":"LexGround", "version":"0.1.0"}`.
+  - [x] **T0.2**: `GET /health` returns `{"status":"ok", "app":"Agentic Legal Assistant", "version":"0.1.0"}`.
   - [x] **T0.3**: `GET /llm-check` routes to Groq API client with `say OK`. (Returns Groq 401 until valid user key is provided in `.env`).
   - [x] **T0.4**: `.env` is git-ignored (`git check-ignore .env` outputs `.env`).
   - [x] **T0.5**: Every library in `requirements.txt` imports without error (`fastapi`, `uvicorn`, `groq`, `python-dotenv`, `pydantic`, `pymupdf`, `pytesseract`, `rank_bm25`, `sentence-transformers`, `faiss-cpu`, `pytest`, `httpx`, `python-multipart`).

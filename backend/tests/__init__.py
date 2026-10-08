@@ -1,1 +1,1 @@
-"""LexGround Tests Package"""
+"""Agentic Legal Assistant Tests Package"""

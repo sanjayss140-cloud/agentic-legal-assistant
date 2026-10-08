@@ -9,10 +9,10 @@ def test_health_endpoint():
     assert response.status_code == 200
     data = response.json()
     assert data.get("status") == "ok"
-    assert data.get("app") == "LexGround"
+    assert data.get("app") == "Agentic Legal Assistant"
 
 def test_root_endpoint():
     response = client.get("/")
     assert response.status_code == 200
-    data = response.json()
-    assert data.get("app") == "LexGround"
+    assert "Agentic Legal Assistant" in response.text
+

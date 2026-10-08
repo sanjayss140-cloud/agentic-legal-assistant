@@ -1,1 +1,1 @@
-"""LexGround Verifier Package"""
+"""Agentic Legal Assistant Verifier Package"""

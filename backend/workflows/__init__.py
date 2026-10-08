@@ -1,1 +1,1 @@
-"""LexGround Workflows Package"""
+"""Agentic Legal Assistant Workflows Package"""

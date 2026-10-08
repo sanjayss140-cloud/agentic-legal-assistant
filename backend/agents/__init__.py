@@ -1,1 +1,1 @@
-"""LexGround Agents Package"""
+"""Agentic Legal Assistant Agents Package"""

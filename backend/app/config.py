@@ -17,5 +17,5 @@ EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "BAAI/bge-small-en-v1.5
 RERANKER_MODEL_NAME = os.getenv("RERANKER_MODEL_NAME", "cross-encoder/ms-marco-MiniLM-L-6-v2")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 GROQ_FAST_MODEL = os.getenv("GROQ_FAST_MODEL", "llama-3.1-8b-instant")
-DATABASE_PATH = BASE_DIR / "lexground.db"
+DATABASE_PATH = BASE_DIR / "legal-assistant.db"
 CORPUS_DIR = BASE_DIR / "data" / "corpus"

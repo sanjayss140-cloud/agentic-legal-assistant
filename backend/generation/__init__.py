@@ -1,1 +1,1 @@
-"""LexGround Generation Package"""
+"""Agentic Legal Assistant Generation Package"""

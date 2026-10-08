@@ -1,1 +1,1 @@
-"""LexGround Ingestion Package"""
+"""Agentic Legal Assistant Ingestion Package"""

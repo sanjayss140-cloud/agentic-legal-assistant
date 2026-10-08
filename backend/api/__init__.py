@@ -1,1 +1,1 @@
-"""LexGround API Package"""
+"""Agentic Legal Assistant API Package"""

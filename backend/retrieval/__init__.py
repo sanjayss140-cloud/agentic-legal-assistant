@@ -1,1 +1,1 @@
-"""LexGround Retrieval Package"""
+"""Agentic Legal Assistant Retrieval Package"""

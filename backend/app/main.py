@@ -9,11 +9,14 @@ if sys_path_root not in sys.path:
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from groq import Groq
 from backend.app import config
+from backend.api.router import router as api_router
 
 app = FastAPI(
-    title="LexGround API",
+    title="Agentic Legal Assistant API",
     description="Agentic Legal Assistant where every fact and citation is verifiable.",
     version="0.1.0",
 )
@@ -26,20 +29,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.get("/")
-def root():
-    return {
-        "app": "LexGround",
-        "description": "Agentic Legal Assistant",
-        "health_check": "/health",
-        "llm_check": "/llm-check",
-    }
+# Include API Router
+app.include_router(api_router, prefix="/api")
 
 @app.get("/health")
 def health_check():
     return {
         "status": "ok",
-        "app": "LexGround",
+        "app": "Agentic Legal Assistant",
         "version": "0.1.0",
     }
 
@@ -74,6 +71,28 @@ def llm_check():
             status_code=500,
             detail=f"Groq API call failed: {str(e)}",
         )
+
+# Serve frontend build if available
+frontend_dist = Path(sys_path_root) / "frontend" / "dist"
+if frontend_dist.exists():
+    assets_dir = frontend_dist / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+    
+    @app.get("/")
+    def serve_index():
+        index_file = frontend_dist / "index.html"
+        if index_file.exists():
+            return FileResponse(index_file)
+        return {"status": "ok", "app": "Agentic Legal Assistant"}
+    
+    @app.get("/bg.jpg")
+    def serve_bg():
+        bg_file = frontend_dist / "bg.jpg"
+        if bg_file.exists():
+            return FileResponse(bg_file)
+        raise HTTPException(status_code=404, detail="Background not found")
+
 
 if __name__ == "__main__":
     import uvicorn

@@ -1,1 +1,1 @@
-"""LexGround App Package"""
+"""Agentic Legal Assistant App Package"""

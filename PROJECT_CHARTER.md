@@ -1,4 +1,4 @@
-# PROJECT CHARTER: LexGround
+# PROJECT CHARTER: Agentic Legal Assistant
 
 MISSION: An agentic legal assistant where every fact and every citation is verifiable. Verifiability beats fluency.
 
