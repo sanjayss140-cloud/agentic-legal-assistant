@@ -25,6 +25,42 @@ def get_cross_encoder():
         _cross_encoder_model = CrossEncoder(config.RERANKER_MODEL_NAME)
     return _cross_encoder_model
 
+def rewrite_query_with_history(query: str, history: List[Dict[str, str]], groq_client=None) -> str:
+
+    """Rewrite follow-up queries using prior chat turns to make them standalone."""
+    if not history:
+        return query
+    
+    # Check if follow-up pronoun or reference exists
+    follow_up_cues = ["he", "she", "they", "second accused", "co-accused", "that case", "same order", "what about", "and then"]
+    is_follow_up = any(cue in query.lower() for cue in follow_up_cues)
+    
+    if not is_follow_up:
+        return query
+
+    if groq_client:
+        try:
+            turns = "\n".join([f"{h['role']}: {h['content']}" for h in history[-3:]])
+            resp = groq_client.chat.completions.create(
+                model=config.GROQ_FAST_MODEL,
+                messages=[{
+                    "role": "user",
+                    "content": f"Given the conversation history:\n{turns}\n\nRewrite this follow-up into a standalone legal search query:\n\"{query}\"\nReturn ONLY the rewritten query."
+                }],
+                temperature=0.0,
+                max_tokens=60
+            )
+            rewritten = resp.choices[0].message.content.strip().replace('"', '')
+            if len(rewritten) > 5:
+                return rewritten
+        except Exception:
+            pass
+
+    # Heuristic resolution: prepend last user question context
+    last_user_turn = next((h["content"] for h in reversed(history) if h["role"] == "user"), "")
+    return f"{last_user_turn} {query}".strip()
+
+
 def get_all_chunks(doc_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
     conn = get_db()
     cursor = conn.cursor()
