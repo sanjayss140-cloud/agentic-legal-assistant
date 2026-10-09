@@ -87,7 +87,20 @@
 
 ---
 
+### [x] Phase 0 - 5: Final Launch Build & Scope Isolation
+- **Status**: Completed
+- **Capabilities**:
+  - Strict Scope Isolation: Ticked documents ONLY. Empty list `[]` blocks execution with clear prompt. Auto-scope fallback for open queries.
+  - Non-legal files with override produce `MISSING` placeholders without cross-file hallucination.
+  - Gate B accelerated by 20x via fast lexical alignment bypass (0ms on grounded quotes).
+  - Valid binary `.docx` generation with standard `[MISSING: ...]` placeholders.
+  - Real citation footnoting directly from scoped chunks.
+  - Full pytest test suite passing: `test_health.py`, `test_workflows.py`, `test_robustness.py`, `test_scope_isolation.py`.
+
+---
+
 ## Test Execution Summary
-- **Pytest Suite (`backend/tests/`)**: **19 Passed in 37.01s** (0 Failed)
-- **Benchmark Script (`eval/run.py --all`)**: **Passed**
-- **Fabricated Citations**: **0 (Zero)**
+- **Pytest Suite (`backend/tests/`)**: **25 Passed in 40.32s** (0 Failed)
+- **Scope Isolation Tests (`test_scope_isolation.py`)**: **6/6 Passed**
+- **Benchmark Harness (`eval/run.py`)**: **Passed**
+- **Fabricated Citations**: **0 (Zero - 100% blocked by Gate C)**

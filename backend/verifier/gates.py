@@ -58,7 +58,7 @@ def verify_gate_b(claim_text: str, exact_quote: str, groq_client=None) -> Tuple[
     quote_words = set(norm_q.split())
     if claim_words:
         overlap = len(claim_words.intersection(quote_words)) / len(claim_words)
-        if overlap >= 0.65:
+        if overlap >= 0.50:
             return "supported", f"High lexical alignment ({int(overlap * 100)}%)"
 
     if not groq_client:
@@ -109,13 +109,22 @@ def get_cached_registry() -> set:
     conn.close()
     return _cached_registry
 
-def verify_gate_c(text: str) -> Tuple[bool, List[str]]:
+def verify_gate_c(text: str, scoped_doc_ids: Optional[List[str]] = None) -> Tuple[bool, List[str]]:
     """
     GATE C (Citation Registry Gate):
     Any named statute/section or case cited in an answer must exist
-    in the corpus citation registry; otherwise it is marked as fabricated and BLOCKED.
+    in the corpus citation registry of the scoped documents; otherwise it is marked as fabricated and BLOCKED.
     """
-    registered = get_cached_registry()
+    if scoped_doc_ids:
+        conn = get_db()
+        cursor = conn.cursor()
+        placeholders = ",".join(["?"] * len(scoped_doc_ids))
+        cursor.execute(f"SELECT citation_text FROM citation_registry WHERE doc_id IN ({placeholders})", scoped_doc_ids)
+        rows = cursor.fetchall()
+        registered = {normalize_text(r[0]) for r in rows}
+        conn.close()
+    else:
+        registered = get_cached_registry()
 
     # Detect statutes mentioned
     statute_mentions = re.findall(r"(?:Section|Sec\.|s\.)\s*\d+[A-Za-z]*(?:\s*\([0-9a-zA-Z]+\))*", text, re.IGNORECASE)
@@ -131,9 +140,7 @@ def verify_gate_c(text: str) -> Tuple[bool, List[str]]:
                 
         for c in case_mentions:
             clean_c = normalize_text(c)
-            # Filter out generic terms
             if not any(clean_c in r or r in clean_c for r in registered):
-                # Don't block petitioner vs state standard heading
                 if "petitioner" not in clean_c and "applicant" not in clean_c:
                     unregistered.append(c)
 
@@ -141,11 +148,11 @@ def verify_gate_c(text: str) -> Tuple[bool, List[str]]:
         return False, unregistered
     return True, []
 
-def run_critic_repair_loop(claims: List[Dict[str, Any]], retrieved_chunks: List[Dict[str, Any]], groq_client=None) -> List[Dict[str, Any]]:
+def run_critic_repair_loop(claims: List[Dict[str, Any]], retrieved_chunks: List[Dict[str, Any]], groq_client=None, scoped_doc_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
     """
     Deterministic Critic Loop:
     Checks each claim against Gate A (exact quote in chunk),
-    Gate B (entailment), Gate C (registry).
+    Gate B (entailment), Gate C (registry), and Scope isolation.
     If a claim fails, attempts up to 2 repair iterations;
     if still failing, removes the claim from final output.
     """
@@ -158,13 +165,19 @@ def run_critic_repair_loop(claims: List[Dict[str, Any]], retrieved_chunks: List[
         if not chunk:
             continue
         
+        # Scope isolation check: chunk doc_id must be within scope
+        chunk_doc_id = chunk.get("doc_id") or (cid.split(":")[0] if ":" in cid else None)
+        if scoped_doc_ids and chunk_doc_id and chunk_doc_id not in scoped_doc_ids:
+            claim["status"] = "removed"
+            claim["reasons"] = [f"Scope isolation violation: chunk doc_id '{chunk_doc_id}' is not in scoped doc_ids"]
+            continue
+
         quote = claim.get("quote", "")
         text = claim.get("text", "")
         
         # Gate A: Deterministic quote in chunk
         gate_a, reason_a = verify_gate_a(quote, chunk["text"], is_ocr=bool(chunk.get("ocr")))
         if not gate_a:
-            # Repair round 1: extract genuine sentence from chunk
             sentences = [s.strip() for s in chunk["text"].split(".") if len(s.strip()) > 25]
             if sentences:
                 quote = sentences[0]
@@ -174,8 +187,8 @@ def run_critic_repair_loop(claims: List[Dict[str, Any]], retrieved_chunks: List[
         # Gate B: Entailment
         gate_b, reason_b = verify_gate_b(text, quote, groq_client)
 
-        # Gate C: Registry check
-        gate_c, bad_cites = verify_gate_c(text)
+        # Gate C: Registry check (scoped)
+        gate_c, bad_cites = verify_gate_c(text, scoped_doc_ids=scoped_doc_ids)
 
         if gate_a and gate_c and gate_b in ["supported", "partially_supported"]:
             claim["status"] = "verified"

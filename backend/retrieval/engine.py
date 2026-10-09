@@ -67,22 +67,17 @@ def rewrite_query_with_history(query: str, history: List[Dict[str, str]], groq_c
 
 
 def get_all_chunks(doc_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    if not doc_ids:
+        return []
     conn = get_db()
     cursor = conn.cursor()
-    if doc_ids and len(doc_ids) > 0:
-        placeholders = ",".join(["?"] * len(doc_ids))
-        cursor.execute(f"""
-        SELECT c.chunk_id, c.doc_id, c.page, c.chunk_index, c.text, c.ocr, d.title as doc_title
-        FROM chunks c
-        JOIN documents d ON c.doc_id = d.id
-        WHERE c.doc_id IN ({placeholders})
-        """, doc_ids)
-    else:
-        cursor.execute("""
-        SELECT c.chunk_id, c.doc_id, c.page, c.chunk_index, c.text, c.ocr, d.title as doc_title
-        FROM chunks c
-        JOIN documents d ON c.doc_id = d.id
-        """)
+    placeholders = ",".join(["?"] * len(doc_ids))
+    cursor.execute(f"""
+    SELECT c.chunk_id, c.doc_id, c.page, c.chunk_index, c.text, c.ocr, d.title as doc_title
+    FROM chunks c
+    JOIN documents d ON c.doc_id = d.id
+    WHERE c.doc_id IN ({placeholders})
+    """, doc_ids)
     rows = cursor.fetchall()
     conn.close()
     return [dict(r) for r in rows]

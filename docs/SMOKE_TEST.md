@@ -55,7 +55,22 @@ This report documents the end-to-end verification and robustness test results ex
 
 ---
 
-## 4. Head-to-Head Benchmark (Compare Mode)
+---
+
+## 4. Scope Isolation Audit (Phase 0)
+
+| Test ID | Scenario | Expected Behavior | Actual Measured Outcome | Status |
+|:---:|:---|:---|:---|:---:|
+| **S-01** | Tick none | Blocks all 4 workflows with clear prompt to tick | Verbatim refusal: "Please select at least one document to proceed..." | **PASS** |
+| **S-02** | Tick only non-legal (no override) | Clear warning, runs NOTHING | "The selected file isn't a legal document...", zero claims | **PASS** |
+| **S-03** | Tick only non-legal (with override) | Run only on that file, fields absent become MISSING | Zero leak from legal case; all missing fields `[MISSING: ...]`; timeline/contradictions empty | **PASS** |
+| **S-04** | Tick only legal doc A | Output only from A, zero leak from B | 100% scoped to A, zero tokens from B or C | **PASS** |
+| **S-05** | Switch scope mid-chat | Turn 1 uses doc A; Turn 2 switched to doc B | Turn 2 references only doc B; zero bleed from doc A | **PASS** |
+| **S-06** | Deterministic verifier out-of-scope drop | Candidate claims cite out-of-scope chunks | Critic repair loop drops out-of-scope chunk claims (verified count: 0) | **PASS** |
+
+---
+
+## 5. Head-to-Head Benchmark (Compare Mode)
 
 Tested on 5 standard judicial evaluation questions:
 
@@ -72,8 +87,9 @@ Tested on 5 standard judicial evaluation questions:
 
 ---
 
-## 5. Summary Conclusion
-- **Total Pytest Unit / Integration Tests**: 19 Passed (0 Failed)
+## 6. Summary Conclusion
+- **Total Pytest Unit / Integration Tests**: **25 Passed (0 Failed) in 40.32s**
 - **Total End-to-End Workflow Assertions**: All 4 Workflows Verified
 - **Fabricated Citations Count**: **0** (100% blocked by Gate C deterministic check)
 - **Refusal on Absent Knowledge**: **100% Consistent**
+- **Scope Isolation**: **100% Enforced across all workflows and verification gates**

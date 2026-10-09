@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-09 04:07:11",
+  "timestamp": "2026-10-09 06:23:48",
   "benchmark_queries": [
     {
       "id": 1,
@@ -43,37 +43,37 @@
     }
   ],
   "case_review": {
-    "title": "Vikram Sharma v. State (Bail Order)",
+    "title": "synthetic_cheque.pdf",
     "key_facts_count": 7,
-    "timeline_count": 4,
-    "contradictions_count": 1,
+    "timeline_count": 1,
+    "contradictions_count": 0,
     "missing_info_count": 5
   },
   "legal_drafting": {
     "bail_application": {
-      "groundedness": 92.5,
-      "footnotes_count": 5,
+      "groundedness": 66.7,
+      "footnotes_count": 3,
       "missing_placeholders_count": 2
     },
     "petition": {
-      "groundedness": 92.5,
-      "footnotes_count": 5,
+      "groundedness": 75.0,
+      "footnotes_count": 3,
       "missing_placeholders_count": 1
     },
     "legal_notice": {
-      "groundedness": 92.5,
-      "footnotes_count": 5,
+      "groundedness": 40.0,
+      "footnotes_count": 3,
       "missing_placeholders_count": 3
     },
     "affidavit": {
-      "groundedness": 92.5,
-      "footnotes_count": 5,
+      "groundedness": 33.3,
+      "footnotes_count": 3,
       "missing_placeholders_count": 2
     }
   },
   "legal_research": {
-    "statutes_count": 2,
-    "precedents_count": 2
+    "statutes_count": 7,
+    "precedents_count": 0
   },
   "anti_fabrication": {
     "trap_blocked": true,
