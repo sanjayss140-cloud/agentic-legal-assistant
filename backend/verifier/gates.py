@@ -141,7 +141,7 @@ def verify_gate_c(text: str, scoped_doc_ids: Optional[List[str]] = None) -> Tupl
         for c in case_mentions:
             clean_c = normalize_text(c)
             if not any(clean_c in r or r in clean_c for r in registered):
-                if "petitioner" not in clean_c and "applicant" not in clean_c:
+                if not any(k in clean_c for k in ["petitioner", "applicant", "appellant", "respondent"]):
                     unregistered.append(c)
 
     if unregistered:

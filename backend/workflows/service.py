@@ -142,33 +142,88 @@ def answer_query(question: str, doc_ids: Optional[List[str]] = None, session_id:
             "trace": [{"stage": "retrieval", "found": 0, "duration": round(time.time() - t0, 3)}],
         }
 
-    # Extract Candidate Claims matching query keywords
+    # Extract Candidate Claims matching query (Groq synthesis with strict verbatim quotes + heuristic fallback)
     candidate_claims = []
     seen_quotes = set()
-    STOP_WORDS = {"what", "when", "where", "which", "who", "whom", "whose", "why", "how", "the", "and", "for", "with", "that", "this", "from", "were", "been", "have", "does", "did", "was", "are", "is", "in", "on", "at", "to", "by", "an", "a"}
-    q_words = {w for w in re.findall(r'\w{3,}', effective_query.lower()) if w not in STOP_WORDS}
-    min_matches = 1 if len(q_words) <= 2 else 2
 
-    for chk in chunks:
-        raw_text = clean_legal_text(chk["text"])
-        sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', raw_text) if len(s.strip()) > 30]
-        for s in sentences:
-            s_lower = s.lower()
-            matched_words = [w for w in q_words if re.search(rf"\b{re.escape(w)}\b", s_lower)]
-            if s_lower not in seen_quotes and len(matched_words) >= min_matches:
-                seen_quotes.add(s_lower)
-                clean_s = s if s.endswith('.') else s + '.'
-                candidate_claims.append({
-                    "id": f"c_{len(candidate_claims)+1}",
-                    "text": clean_s,
-                    "chunk_id": chk["chunk_id"],
-                    "doc": chk["doc_title"],
-                    "page": chk["page"],
-                    "quote": clean_s[:120]
-                })
+    if groq_client:
+        try:
+            chunk_excerpts = []
+            for chk in chunks[:4]:
+                raw = clean_legal_text(chk["text"])
+                chunk_excerpts.append(f"[Chunk {chk['chunk_id']} | Doc: {chk['doc_title']} | Page: {chk['page']}]:\n{raw[:750]}")
+            context_str = "\n\n".join(chunk_excerpts)
+
+            prompt_content = f"""You are a specialized legal AI assistant.
+Answer the user's question accurately using ONLY the provided excerpt chunks from the official legal document record.
+DO NOT use outside knowledge. DO NOT hallucinate.
+For every claim you make, you MUST quote a literal, verbatim substring from the excerpt that proves it.
+
+User Question: {effective_query}
+
+Case Record Excerpts:
+{context_str}
+
+Respond in valid JSON format with the following structure:
+[
+  {{
+    "text": "Precise factual statement directly answering the question.",
+    "quote": "literal verbatim substring of at least 20 characters from the excerpt that proves this statement",
+    "chunk_id": "the chunk_id where the quote appears",
+    "doc": "doc_title",
+    "page": 1
+  }}
+]
+If the excerpts do not contain the answer, return []."""
+
+            resp = groq_client.chat.completions.create(
+                model=config.GROQ_FAST_MODEL,
+                messages=[{"role": "user", "content": prompt_content}],
+                temperature=0.0,
+                max_tokens=400
+            )
+            raw_reply = resp.choices[0].message.content.strip()
+            json_match = re.search(r"\[.*\]", raw_reply, re.DOTALL)
+            if json_match:
+                parsed_claims = json.loads(json_match.group(0))
+                for c in parsed_claims:
+                    if isinstance(c, dict) and c.get("text") and c.get("quote") and c.get("chunk_id"):
+                        candidate_claims.append({
+                            "id": f"c_{len(candidate_claims)+1}",
+                            "text": c["text"],
+                            "chunk_id": c["chunk_id"],
+                            "doc": c.get("doc", chunks[0]["doc_title"]),
+                            "page": c.get("page", chunks[0]["page"]),
+                            "quote": c["quote"]
+                        })
+        except Exception:
+            candidate_claims = []
+
+    if not candidate_claims:
+        STOP_WORDS = {"what", "when", "where", "which", "who", "whom", "whose", "why", "how", "the", "and", "for", "with", "that", "this", "from", "were", "been", "have", "does", "did", "was", "are", "is", "in", "on", "at", "to", "by", "an", "a"}
+        q_words = {w for w in re.findall(r'\w{3,}', effective_query.lower()) if w not in STOP_WORDS}
+        min_matches = 1 if len(q_words) <= 2 else 2
+
+        for chk in chunks:
+            raw_text = clean_legal_text(chk["text"])
+            sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', raw_text) if len(s.strip()) > 30]
+            for s in sentences:
+                s_lower = s.lower()
+                matched_words = [w for w in q_words if re.search(rf"\b{re.escape(w)}\b", s_lower)]
+                if s_lower not in seen_quotes and (len(matched_words) >= min_matches or not q_words):
+                    seen_quotes.add(s_lower)
+                    clean_s = s if s.endswith('.') else s + '.'
+                    candidate_claims.append({
+                        "id": f"c_{len(candidate_claims)+1}",
+                        "text": clean_s,
+                        "chunk_id": chk["chunk_id"],
+                        "doc": chk["doc_title"],
+                        "page": chk["page"],
+                        "quote": clean_s[:120]
+                    })
+                    break
+            if len(candidate_claims) >= 3:
                 break
-        if len(candidate_claims) >= 3:
-            break
 
     # Run Deterministic Gate & Critic Loop with scope isolation
     verified_claims = run_critic_repair_loop(candidate_claims, chunks, groq_client, scoped_doc_ids=scoped_doc_ids)
@@ -272,6 +327,8 @@ def review_case(doc_ids: Optional[List[str]] = None) -> Dict[str, Any]:
     conn.close()
 
     full_text = "\n".join(c["text"] for c in chunks)
+    first_pages_text = "\n".join([c["text"] for c in chunks[:3]]) if chunks else ""
+    last_pages_text = "\n".join([c["text"] for c in chunks[-3:]]) if chunks else ""
     first_text = chunks[0]["text"] if chunks else ""
     last_text = chunks[-1]["text"] if chunks else ""
     c_type = target_doc.get("case_type", "general")
@@ -285,54 +342,67 @@ def review_case(doc_ids: Optional[List[str]] = None) -> Dict[str, Any]:
             return "MISSING", "", ""
 
         if field_name == "Parties":
-            p_match = re.search(r"IN\s+THE\s+MATTER\s+OF:\s*([^\n\r]+?)(?:\s+vs\.?\s+|\s+VERSUS\s+)([^\n\r]+)", first_text, re.IGNORECASE)
+            p_match = re.search(r"IN\s+THE\s+MATTER\s+OF:\s*([^\n\r]+?)(?:\s+vs\.?\s+|\s+VERSUS\s+)([^\n\r]+)", first_pages_text, re.IGNORECASE)
             if p_match:
-                val = f"{p_match.group(1).strip()} vs {p_match.group(2).strip()}"
+                p1 = re.sub(r"\s+", " ", p_match.group(1).strip())
+                p2 = re.sub(r"\s+", " ", p_match.group(2).strip())
+                val = f"{p1} vs {p2}"
                 return val, f"[{doc_title}, p.1]", p_match.group(0)[:120]
+            cause_title = re.search(r"([A-Z\s\.\,\(\)\&]{3,60}?)(?:\s*\.\.\.\s*(?:APPELLANT|PETITIONER|APPLICANT|ACCUSED|AP)[^\n\r]*)?\s+(?:VERSUS|VS\.?)\s+([A-Z\s\.\,\(\)\&]{3,60}?)(?:\s*\.\.\.\s*(?:RESPONDENT|STATE|DEFENDANT|RE)[^\n\r]*)?(?:\n|\r|$)", first_pages_text)
+            if cause_title:
+                p1 = re.sub(r"\s+", " ", cause_title.group(1).strip()).strip("., ")
+                p2 = re.sub(r"\s+", " ", cause_title.group(2).strip()).strip("., ")
+                if not any(k in p1.lower() or k in p2.lower() for k in ["groundedness", "baseline", "order", "court", "dated", "evaluation"]):
+                    if len(p1) > 2 and len(p2) > 2:
+                        return f"{p1} vs {p2}", f"[{doc_title}, p.1]", cause_title.group(0)[:120]
             v_match = re.search(r"([A-Z\s\.\(\)]{3,35})\s+(?:vs\.?|versus|v\.)\s+([A-Z\s\.\(\)]{3,35})", first_text, re.IGNORECASE)
-            if v_match and not any(k in v_match.group(0).lower() for k in ["court", "order", "date"]):
+            if v_match and not any(k in v_match.group(0).lower() for k in ["court", "order", "date", "groundedness", "baseline"]):
                 return v_match.group(0).strip(), f"[{doc_title}, p.1]", v_match.group(0)[:120]
             return "MISSING", "", ""
 
         if field_name == "Court":
-            c_match = re.search(r"(HIGH\s+COURT\s+OF\s+[A-Z\s]+|SUPREME\s+COURT\s+OF\s+INDIA|COURT\s+OF\s+[A-Z\s]+MAGISTRATE|DISTRICT\s+COURT\s+[A-Z\s]+)", first_text, re.IGNORECASE)
+            c_match = re.search(r"(?:IN\s+THE\s+)?(SUPREME\s+COURT\s+OF\s+INDIA|HIGH\s+COURT\s+OF\s+[A-Z\s]+|COURT\s+OF\s+[A-Z\s]+(?:JUDGE|MAGISTRATE)|DISTRICT\s+(?:AND\s+SESSIONS\s+)?COURT[A-Z\s]*|SPECIAL\s+COURT\s+[A-Z\s]+)", first_pages_text, re.IGNORECASE)
             if c_match:
-                return c_match.group(0).strip(), f"[{doc_title}, p.1]", c_match.group(0).strip()
+                c_val = re.sub(r"\s+", " ", c_match.group(0).strip())
+                return c_val, f"[{doc_title}, p.1]", c_val
             return "MISSING", "", ""
 
         if field_name == "Case Number":
-            cn_match = re.search(r"(?:BAIL\s+APPLN\.?|CRL\.?\s*M\.?C\.?|CC\s+NO\.?|CRIMINAL\s+MISC\.?\s*NO\.?|CRIME\s+NO\.?|FIR\s+NO\.?)\s*[:\.]?\s*[\dA-Za-z\/\-]+(?:\s*OF\s*\d{4})?", first_text, re.IGNORECASE)
+            cn_match = re.search(r"(?:SPECIAL\s+LEAVE\s+PETITION\s*(?:\([A-Za-z\.]+\))?|CRIMINAL\s+APPEAL|CIVIL\s+APPEAL|WRIT\s+PETITION\s*(?:\([A-Za-z\.]+\))?|BAIL\s+APPLN\.?|CRL\.?\s*M\.?C\.?|CC\s+NO\.?|CRIMINAL\s+MISC\.?\s*NO\.?|CRIME\s+NO\.?|FIR\s+NO\.?|Cr\.?M\.?P\.?\s*No\.?|Case\s+No\.?|MISCELLANEOUS\s+APPLICATION\s+(?:NO\.?)?\s*[\d/]+(?:\s+OF\s+\d{4})?\s+IN\s+SPECIAL\s+LEAVE\s+PETITION[^\n\r]+)\s*(?:No\.?)?\s*[:\.]?\s*[\dA-Za-z\/\-]+(?:\s*OF\s*\d{4})?", first_pages_text, re.IGNORECASE)
             if cn_match:
-                return cn_match.group(0).strip(), f"[{doc_title}, p.1]", cn_match.group(0).strip()
+                cn_val = re.sub(r"\s+", " ", cn_match.group(0).strip())
+                return cn_val, f"[{doc_title}, p.1]", cn_val
             return "MISSING", "", ""
 
         if field_name == "Date of Order":
-            d_match = re.search(r"\b(?:ORDER\s+DATED|DATE\s+OF\s+ORDER|DATED|DELIVERED\s+ON|DECIDED\s+ON)\s*[:\.]?\s*(\d{1,2}[-/.\s](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[-/.\s]\d{2,4}|\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})\b", first_text, re.IGNORECASE)
+            d_match = re.search(r"(?:ORDER\s+DATED|DATE\s+OF\s+ORDER|DATED|DELIVERED\s+ON|DECIDED\s+ON|JUDGMENT\s+DATED)\s*[:\-]?\s*([0-9]{1,2}[./-][0-9]{1,2}[./-][0-9]{2,4}|[0-9]{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]+,?\s+[0-9]{4}|[A-Za-z]+\s+[0-9]{1,2},?\s+[0-9]{4})", first_pages_text, re.IGNORECASE)
             if d_match:
-                return d_match.group(1).strip(), f"[{doc_title}, p.1]", d_match.group(0).strip()
+                d_val = re.sub(r"\s+", " ", d_match.group(1).strip())
+                return d_val, f"[{doc_title}, p.1]", d_val
             # check end of text
-            end_d = re.search(r"\b(\d{1,2}[-/.\s](?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[-/.\s]\d{2,4})\b", last_text)
+            end_d = re.search(r"\b([0-9]{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]+,?\s+[0-9]{4}|[A-Za-z]+\s+[0-9]{1,2},?\s+[0-9]{4})\b", last_pages_text, re.IGNORECASE)
             if end_d:
-                return end_d.group(1).strip(), f"[{doc_title}, p.{len(chunks)}]", end_d.group(0).strip()
+                d_val = re.sub(r"\s+", " ", end_d.group(1).strip())
+                return d_val, f"[{doc_title}, p.{len(chunks)}]", d_val
             return "MISSING", "", ""
 
         if field_name == "Sections / Charges":
-            s_matches = re.findall(r"(?:Section|Sec\.|s\.)\s*\d+[A-Za-z]*(?:\s*\([0-9a-zA-Z]+\))*(?:\s*(?:IPC|CrPC|BNSS|BNS|NI Act))?", full_text, re.IGNORECASE)
+            s_matches = re.findall(r"(?:Section|Sec\.|s\.)\s*\d+[A-Za-z]*(?:\s*\([0-9a-zA-Z]+\))*(?:\s*(?:of\s+(?:the\s+)?)?(?:IPC|CrPC|Cr\.?P\.?C\.?|BNSS|BNS|NI\s+Act|PMLA|NDPS|POCSO|UAPA))?", full_text, re.IGNORECASE)
             if s_matches:
                 distinct_s = sorted(list(set(s_matches)))[:4]
                 return ", ".join(distinct_s), f"[{doc_title}, p.1]", distinct_s[0]
             return "MISSING", "", ""
 
         if field_name == "Relief Sought":
-            r_match = re.search(r"(?:seeking|for)\s+(anticipatory\s+bail|regular\s+bail|quashing|interim\s+bail|discharge)", full_text, re.IGNORECASE)
+            r_match = re.search(r"(?:seeking|for)\s+(anticipatory\s+bail|regular\s+bail|quashing|interim\s+bail|discharge|guidelines|directions)", full_text, re.IGNORECASE)
             if r_match:
                 return f"Grant of {r_match.group(1).strip()}", f"[{doc_title}, p.1]", r_match.group(0)
             return "MISSING", "", ""
 
         if field_name == "Outcome / Order":
             # Search last chunks for operative sentence
-            for c in reversed(chunks[-2:]):
-                o_match = re.search(r"\b(bail is granted|released on (?:regular|anticipatory) bail|petition is allowed|application is allowed|appeal is allowed|application is dismissed|petition is dismissed)\b[^\.]*\.", c["text"], re.IGNORECASE)
+            for c in reversed(chunks[-3:]):
+                o_match = re.search(r"\b(bail is granted|released on (?:regular|anticipatory) bail|petition is allowed|application is allowed|appeal is allowed|petition stands disposed of|appeal stands disposed of|application is dismissed|petition is dismissed|guidelines are issued|interim protection is confirmed)\b[^\.]*\.", c["text"], re.IGNORECASE)
                 if o_match:
                     return o_match.group(0).strip(), f"[{doc_title}, p.{c['page']}]", o_match.group(0).strip()
             return "MISSING", "", ""
@@ -749,10 +819,10 @@ def research_legal_issue(issue: str, doc_ids: Optional[List[str]] = None) -> Dic
                     break
 
         # Find precedents
-        cs_matches = re.finditer(r"[A-Z][a-zA-Z\.\s]{2,25}\s+v(?:s\.?|ersus)\s+[A-Z][a-zA-Z\.\s]{2,25}", raw)
+        cs_matches = re.finditer(r"([A-Z][A-Za-z\.\s]{2,45}\s+(?:v(?:s\.?|ersus))\s+[A-Z][A-Za-z\.\s]{2,45}|\(\d{4}\)\s+\d+\s+SCC\s+\d+|AIR\s+\d{4}\s+[A-Z\s]+(?:\d+)?)", raw)
         for cm in cs_matches:
             c_name = cm.group(0).strip()
-            if c_name.lower() not in seen_cases and not any(k in c_name.lower() for k in ["state", "petitioner", "respondent", "applicant"]):
+            if c_name.lower() not in seen_cases and not any(k in c_name.lower() for k in ["groundedness", "baseline", "order", "court", "dated", "petitioner vs", "applicant vs"]):
                 seen_cases.add(c_name.lower())
                 s_match = re.search(rf"[^.!?]*\b{re.escape(c_name)}\b[^.!?]*[.]", raw)
                 rule_q = s_match.group(0).strip() if s_match else c_name

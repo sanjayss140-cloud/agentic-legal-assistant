@@ -490,21 +490,26 @@
       margin-top: 4px;
     }
 
-    /* Compare Mode Box */
-    .compare-wrap {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-      margin-top: 10px;
+    /* Action Pill Buttons */
+    .pill-btn {
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 999px;
+      color: #e0e0e0;
+      font-size: 11.5px;
+      padding: 4px 11px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
     }
-    .compare-side {
-      background: rgba(0, 0, 0, 0.35);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 10px 12px;
-      font-size: 13px;
+    .pill-btn:hover {
+      background: rgba(255, 255, 255, 0.16);
+      color: #FFF;
+      border-color: rgba(255, 255, 255, 0.4);
+      transform: translateY(-1px);
     }
-    .compare-side.highlight { border-color: #FFF; }
 
     /* Slide-over citation drawer on right */
     #source-drawer {
@@ -568,12 +573,9 @@
       <header class="top-header">
         <div class="app-brand">Agentic Legal Assistant</div>
         <div class="header-badges">
-          <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; color: var(--muted);">
-            <input type="checkbox" id="compare-checkbox" /> Compare Mode
-          </label>
-          <button class="metric-badge" style="cursor: pointer; background: rgba(255,255,255,0.08);" onclick="openEvalModal()">Evaluation</button>
+          <button class="metric-badge" style="cursor: pointer; background: rgba(255,255,255,0.08); font-weight: 500;" onclick="openEvalModal()">📊 Evaluation</button>
           <span class="metric-badge" id="claims-badge">Verified claims: --</span>
-          <span class="metric-badge" id="fab-badge">Citations Fabricated: n/a</span>
+          <span class="metric-badge" id="fab-badge">Fabrications: 0</span>
         </div>
       </header>
 

@@ -134,7 +134,7 @@ def classify_document_type(full_text: str, filename: str) -> Tuple[str, str, boo
     """
     Classify document into:
     doc_type: legal_case | statute_or_act | contract_or_notice | not_legal | unreadable
-    case_type: bail | cheque_bounce | criminal | civil | consumer | writ | contract | other
+    case_type: bail | cheque_bounce | criminal | civil | consumer | writ | contract | non_legal | other
     is_legal: bool
     confidence: float
     description: str
@@ -144,27 +144,43 @@ def classify_document_type(full_text: str, filename: str) -> Tuple[str, str, boo
     if len(full_text.strip()) < 30:
         return "unreadable", "unknown", False, 0.95, "File is empty or contains insufficient text"
 
-    # Non-legal signals (e.g. recipes, personal letters, coding, invoices)
+    # Non-legal signals (recipes, coding, academic/hackathon, assignments)
     recipe_cues = ["recipe", "ingredients", "tablespoon", "teaspoon", "cook time", "boil", "bake", "cuisine", "calories"]
     code_cues = ["import ", "function ", "class ", "def ", "var ", "const ", "npm install", "git commit"]
+    academic_cues = [
+        "hackathon", "problem statement", "hacknex", "guidelines for submission", "evaluation criteria", 
+        "rubric", "round 1", "round 2", "team members", "curriculum", "syllabus", "assignment", "deliverables",
+        "benchmark dataset", "model architecture", "fine-tuning", "test set", "baseline rag"
+    ]
     
     recipe_score = sum(1 for c in recipe_cues if c in text_lower)
     code_score = sum(1 for c in code_cues if c in text_lower)
+    academic_score = sum(1 for c in academic_cues if c in text_lower)
     
     if recipe_score >= 3:
         return "not_legal", "non_legal", False, 0.98, "Cooking recipe / culinary document"
     if code_score >= 3 and "court" not in text_lower and "section" not in text_lower:
         return "not_legal", "non_legal", False, 0.95, "Source code / programming document"
+    if academic_score >= 2 and not ("in the supreme court" in text_lower or "in the high court" in text_lower or "bail appln" in text_lower):
+        return "not_legal", "non_legal", False, 0.95, "Non-legal document (Hackathon problem statements / technical document). Tick 'Use anyway' to analyze."
 
-    # Legal signals
+    # Strict judicial anchors
+    judicial_anchors = [
+        "supreme court of india", "high court of", "court of sessions", "court of magistrate",
+        "district court", "sessions judge", "chief metropolitan magistrate", "metropolitan magistrate",
+        "bail appln", "crl.m.c", "criminal appeal", "civil appeal", "special leave petition",
+        "first information report", "fir no", "chargesheet", "police station", "state of", "union of india",
+        "anticipatory bail", "regular bail", "quashing of proceedings", "section 439", "section 438", "section 482", "section 138"
+    ]
+    anchor_hits = sum(1 for a in judicial_anchors if a in text_lower)
+
     legal_signals = [
-        "court", "versus", "vs.", "petitioner", "respondent", "appellant", "applicant",
-        "accused", "order", "judgment", "fir", "section", "act", "crpc", "ipc",
-        "bnss", "bns", "bail", "interim", "advocate", "jurisdiction", "affidavit", "notice"
+        "court", "petitioner", "respondent", "appellant", "applicant",
+        "accused", "judgment", "fir", "crpc", "ipc", "bnss", "bns", "bail", "advocate", "affidavit"
     ]
     legal_hits = sum(1 for s in legal_signals if s in text_lower)
     
-    if legal_hits < 2:
+    if anchor_hits == 0 and legal_hits < 2:
         return "not_legal", "non_legal", False, 0.85, "General non-legal text"
 
     # Detect case type
@@ -182,16 +198,14 @@ def classify_document_type(full_text: str, filename: str) -> Tuple[str, str, boo
         c_type = "civil"
 
     # Determine primary doc_type
-    if "versus" in text_lower or " vs " in text_lower or "v." in text_lower or "court" in text_lower:
-        d_type = "legal_case"
-    elif "act, 19" in text_lower or "act, 20" in text_lower or "ordinance" in text_lower:
+    if "act, 19" in text_lower or "act, 20" in text_lower or "ordinance" in text_lower:
         d_type = "statute_or_act"
     elif "notice" in text_lower or "agreement" in text_lower:
         d_type = "contract_or_notice"
     else:
         d_type = "legal_case"
 
-    confidence = min(0.60 + (legal_hits * 0.04), 0.99)
+    confidence = min(0.70 + (anchor_hits * 0.10) + (legal_hits * 0.02), 0.99)
     return d_type, c_type, True, confidence, "Legal document"
 
 def extract_citations(text: str) -> List[Dict[str, str]]:
@@ -210,34 +224,68 @@ def extract_citations(text: str) -> List[Dict[str, str]]:
 
 def extract_metadata(full_text: str, filename: str) -> Dict[str, str]:
     meta = {
-        "court": "Hon'ble Court",
-        "date": "2024",
-        "case_number": "Case Record",
-        "parties": "Petitioner vs Respondent",
-        "judge": "Hon'ble Bench",
+        "court": "MISSING",
+        "date": "MISSING",
+        "case_number": "MISSING",
+        "parties": "MISSING",
+        "judge": "MISSING",
         "statutes": "",
     }
-    court_match = re.search(r"(IN THE (?:HIGH COURT|SUPREME COURT|DISTRICT COURT)[^\n\r]+)", full_text, re.IGNORECASE)
+    first_pages_text = full_text[:4000]
+
+    # Court regex
+    court_match = re.search(
+        r"(?:IN\s+THE\s+)?(SUPREME\s+COURT\s+OF\s+INDIA|HIGH\s+COURT\s+OF\s+[A-Z\s]+|COURT\s+OF\s+[A-Z\s]+(?:JUDGE|MAGISTRATE)|DISTRICT\s+(?:AND\s+SESSIONS\s+)?COURT[A-Z\s]*|SPECIAL\s+COURT\s+[A-Z\s]+)",
+        first_pages_text,
+        re.IGNORECASE
+    )
     if court_match:
-        meta["court"] = court_match.group(1).strip()
-    
-    date_match = re.search(r"(?:Dated|Date|Order dated|Judgment dated)\s*[:\-]?\s*([0-9]{1,2}[./-][0-9]{1,2}[./-][0-9]{2,4}|[0-9]{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]+,?\s+[0-9]{4})", full_text, re.IGNORECASE)
+        meta["court"] = re.sub(r"\s+", " ", court_match.group(0).strip())
+
+    # Date regex (header or footer)
+    date_match = re.search(
+        r"(?:ORDER\s+DATED|DATE\s+OF\s+ORDER|DATED|DELIVERED\s+ON|DECIDED\s+ON|JUDGMENT\s+DATED)\s*[:\-]?\s*([0-9]{1,2}[./-][0-9]{1,2}[./-][0-9]{2,4}|[0-9]{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]+,?\s+[0-9]{4}|[A-Za-z]+\s+[0-9]{1,2},?\s+[0-9]{4})",
+        first_pages_text,
+        re.IGNORECASE
+    )
+    if not date_match and len(full_text) > 4000:
+        date_match = re.search(
+            r"\b([0-9]{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]+,?\s+[0-9]{4}|[A-Za-z]+\s+[0-9]{1,2},?\s+[0-9]{4})\b",
+            full_text[-2000:],
+            re.IGNORECASE
+        )
     if date_match:
-        meta["date"] = date_match.group(1).strip()
-    
-    case_no = re.search(r"(?:Bail Application|Criminal Appeal|Writ Petition|Special Leave Petition|Cr\.?M\.?P\.?|Case No\.?|CC No\.?)\s*(?:No\.?)?\s*[\d/]+(?:\s*of\s*\d{4})?", full_text, re.IGNORECASE)
+        meta["date"] = re.sub(r"\s+", " ", date_match.group(1).strip())
+
+    # Case number regex
+    case_no = re.search(
+        r"(?:SPECIAL\s+LEAVE\s+PETITION\s*(?:\([A-Za-z\.]+\))?|CRIMINAL\s+APPEAL|CIVIL\s+APPEAL|WRIT\s+PETITION\s*(?:\([A-Za-z\.]+\))?|BAIL\s+APPLN\.?|CRL\.?\s*M\.?C\.?|CC\s+NO\.?|CRIMINAL\s+MISC\.?\s*NO\.?|CRIME\s+NO\.?|FIR\s+NO\.?|Cr\.?M\.?P\.?\s*No\.?|Case\s+No\.?|MISCELLANEOUS\s+APPLICATION\s+(?:NO\.?)?\s*[\d/]+(?:\s+OF\s+\d{4})?\s+IN\s+SPECIAL\s+LEAVE\s+PETITION[^\n\r]+)\s*(?:No\.?)?\s*[:\.]?\s*[\dA-Za-z\/\-]+(?:\s*OF\s*\d{4})?",
+        first_pages_text,
+        re.IGNORECASE
+    )
     if case_no:
-        meta["case_number"] = case_no.group(0).strip()
+        meta["case_number"] = re.sub(r"\s+", " ", case_no.group(0).strip())
 
-    parties_match = re.search(r"([A-Z][A-Za-z\s\.]+)\s+(?:VERSUS|VS\.?|v\.)\s+([A-Z][A-Za-z\s\.]+)", full_text)
-    if parties_match:
-        meta["parties"] = f"{parties_match.group(1).strip()} vs {parties_match.group(2).strip()}"
+    # Parties regex
+    p_matter = re.search(r"IN\s+THE\s+MATTER\s+OF:\s*([^\n\r]+?)(?:\s+vs\.?\s+|\s+VERSUS\s+)([^\n\r]+)", first_pages_text, re.IGNORECASE)
+    if p_matter:
+        meta["parties"] = f"{re.sub(r'\s+', ' ', p_matter.group(1).strip())} vs {re.sub(r'\s+', ' ', p_matter.group(2).strip())}"
+    else:
+        cause_title = re.search(r"([A-Z\s\.\,\(\)\&]{3,60}?)(?:\s*\.\.\.\s*(?:APPELLANT|PETITIONER|APPLICANT|ACCUSED|AP)[^\n\r]*)?\s+(?:VERSUS|VS\.?)\s+([A-Z\s\.\,\(\)\&]{3,60}?)(?:\s*\.\.\.\s*(?:RESPONDENT|STATE|DEFENDANT|RE)[^\n\r]*)?(?:\n|\r|$)", first_pages_text)
+        if cause_title:
+            p1 = re.sub(r"\s+", " ", cause_title.group(1).strip()).strip("., ")
+            p2 = re.sub(r"\s+", " ", cause_title.group(2).strip()).strip("., ")
+            if not any(k in p1.lower() or k in p2.lower() for k in ["groundedness", "baseline", "order", "court", "dated", "evaluation"]):
+                if len(p1) > 2 and len(p2) > 2:
+                    meta["parties"] = f"{p1} vs {p2}"
 
-    judge_match = re.search(r"(?:CORAM|BEFORE|HON'BLE MR\. JUSTICE|HON'BLE MRS\. JUSTICE|HON'BLE MS\. JUSTICE)\s*[:\-]?\s*([A-Z\s\.]+)", full_text, re.IGNORECASE)
+    # Judge regex
+    judge_match = re.search(r"(?:HON'BLE\s+(?:MR\.|MS\.|MRS\.)?\s*JUSTICE|CORAM\s*[:\-]?\s*(?:HON'BLE)?\s*JUSTICE|Bench\s*[:\-]?\s*|Author\s*[:\-]?\s*)([A-Z\.\s,]{3,50})", first_pages_text, re.IGNORECASE)
     if judge_match:
-        meta["judge"] = judge_match.group(1).strip()
+        clean_j = re.sub(r"^(?:Bench|Author|CORAM)\s*[:\-]?\s*", "", judge_match.group(0).strip(), flags=re.IGNORECASE)
+        meta["judge"] = re.sub(r"\s+", " ", clean_j.strip())
 
-    statutes_found = [c["text"] for c in extract_citations(full_text[:3500]) if c["type"] == "statute"]
+    statutes_found = [c["text"] for c in extract_citations(first_pages_text) if c["type"] == "statute"]
     meta["statutes"] = ", ".join(list(set(statutes_found))[:5])
     return meta
 
