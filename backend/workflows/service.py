@@ -212,9 +212,12 @@ Respond in valid JSON format with the following structure:
 ]
 If the excerpts do not contain the answer, return []."""
 
-            resp = groq_client.chat.completions.create(
-                model=config.GROQ_FAST_MODEL,
+            from backend.services.groq_resilience import resilient_groq_completion
+            resp = resilient_groq_completion(
+                groq_client=groq_client,
                 messages=[{"role": "user", "content": prompt_content}],
+                model=config.GROQ_FAST_MODEL,
+                fallback_model="llama-3.1-8b-instant",
                 temperature=0.0,
                 max_tokens=400
             )

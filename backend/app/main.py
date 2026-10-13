@@ -15,6 +15,10 @@ from groq import Groq
 from backend.app import config
 from backend.api.router import router as api_router
 from backend.security.middleware import SecurityHeadersMiddleware
+from backend.logging.structured_logger import StructuredLoggingMiddleware
+from backend.services.metrics import generate_prometheus_metrics
+from backend.ingestion.async_worker import recover_stale_jobs
+from fastapi import Response
 
 app = FastAPI(
     title="Agentic Legal Assistant API",
@@ -22,8 +26,15 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# Enforce security headers
+# Enforce security headers and structured logging
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(StructuredLoggingMiddleware)
+
+@app.on_event("startup")
+def on_startup():
+    recovered = recover_stale_jobs()
+    if recovered > 0:
+        print(f"[LexGround Worker] Recovered {recovered} stale ingestion jobs.")
 
 allowed_origins = os.getenv(
     "CORS_ORIGINS", 
@@ -48,6 +59,12 @@ def health_check():
         "app": "Agentic Legal Assistant",
         "version": "0.1.0",
     }
+
+@app.get("/metrics")
+def get_metrics():
+    """Prometheus exposition metrics endpoint."""
+    content = generate_prometheus_metrics()
+    return Response(content=content, media_type="text/plain; version=0.0.4")
 
 @app.get("/llm-check")
 def llm_check():

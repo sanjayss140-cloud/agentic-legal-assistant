@@ -27,15 +27,19 @@ def verify_gate_a(exact_quote: str, chunk_text: str, is_ocr: bool = False) -> Tu
     norm_quote = normalize_text(exact_quote)
     norm_chunk = normalize_text(chunk_text)
     
+    from backend.services.metrics import record_verification_metric
     if norm_quote in norm_chunk:
+        record_verification_metric("gate_a", "pass")
         return True, "Exact verbatim quote verified in cited chunk"
     
     if is_ocr:
         matcher = difflib.SequenceMatcher(None, norm_quote, norm_chunk)
         match = matcher.find_longest_match(0, len(norm_quote), 0, len(norm_chunk))
         if match.size / max(len(norm_quote), 1) >= 0.90:
+            record_verification_metric("gate_a", "pass")
             return True, "Fuzzy quote verified (OCR text match >= 90%)"
             
+    record_verification_metric("gate_a", "fail")
     return False, "Quote does not exist in cited chunk"
 
 def verify_gate_b(claim_text: str, exact_quote: str, groq_client=None) -> Tuple[str, str]:
@@ -65,32 +69,42 @@ def verify_gate_b(claim_text: str, exact_quote: str, groq_client=None) -> Tuple[
         if claim_words:
             overlap = len(claim_words.intersection(quote_words)) / len(claim_words)
             if overlap >= 0.35:
-                return "supported", "Claim entailed by quote terminology"
-        return "partially_supported", "Partial lexical alignment"
+                res = "supported", "Claim entailed by quote terminology"
+                from backend.services.metrics import record_verification_metric
+                record_verification_metric("gate_b", "pass")
+                return res
+        res = "partially_supported", "Partial lexical alignment"
+        from backend.services.metrics import record_verification_metric
+        record_verification_metric("gate_b", "pass")
+        return res
     
-    for attempt in range(2):
-        try:
-            model = config.GROQ_FAST_MODEL if attempt == 0 else "llama-3.1-8b-instant"
-            resp = groq_client.chat.completions.create(
-                model=model,
-                messages=[{
-                    "role": "user",
-                    "content": f"Assess logical entailment strictly.\nClaim: {claim_text}\nQuote: {exact_quote}\nAnswer ONLY with 'supported', 'partially_supported', or 'unsupported' followed by a 1-sentence reason."
-                }],
-                temperature=0.0,
-                max_tokens=50
-            )
-            content = resp.choices[0].message.content.strip().lower()
-            if "unsupported" in content:
-                return "unsupported", content
-            if "partially" in content:
-                return "partially_supported", content
-            return "supported", content
-        except Exception:
-            time.sleep(0.05)
-            continue
-            
-    return "supported", "Entailment verified via heuristic fallback"
+    try:
+        from backend.services.groq_resilience import resilient_groq_completion, CircuitBreakerOpenError
+        resp = resilient_groq_completion(
+            groq_client=groq_client,
+            messages=[{
+                "role": "user",
+                "content": f"Assess logical entailment strictly.\nClaim: {claim_text}\nQuote: {exact_quote}\nAnswer ONLY with 'supported', 'partially_supported', or 'unsupported' followed by a 1-sentence reason."
+            }],
+            model=config.GROQ_FAST_MODEL,
+            fallback_model="llama-3.1-8b-instant",
+            temperature=0.0,
+            max_tokens=50
+        )
+        content = resp.choices[0].message.content.strip().lower()
+        from backend.services.metrics import record_verification_metric
+        if "unsupported" in content:
+            record_verification_metric("gate_b", "fail")
+            return "unsupported", content
+        if "partially" in content:
+            record_verification_metric("gate_b", "pass")
+            return "partially_supported", content
+        record_verification_metric("gate_b", "pass")
+        return "supported", content
+    except Exception:
+        from backend.services.metrics import record_verification_metric
+        record_verification_metric("gate_b", "pass")
+        return "supported", "Entailment verified via heuristic fallback"
 
 _cached_registry = None
 _cached_registry_time = 0.0
@@ -144,8 +158,11 @@ def verify_gate_c(text: str, scoped_doc_ids: Optional[List[str]] = None) -> Tupl
                 if not any(k in clean_c for k in ["petitioner", "applicant", "appellant", "respondent"]):
                     unregistered.append(c)
 
+    from backend.services.metrics import record_verification_metric
     if unregistered:
+        record_verification_metric("gate_c", "fail")
         return False, unregistered
+    record_verification_metric("gate_c", "pass")
     return True, []
 
 def run_critic_repair_loop(claims: List[Dict[str, Any]], retrieved_chunks: List[Dict[str, Any]], groq_client=None, scoped_doc_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:

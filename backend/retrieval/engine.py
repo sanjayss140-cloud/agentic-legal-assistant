@@ -1,3 +1,4 @@
+import time
 import math
 import sqlite3
 from typing import List, Dict, Any, Optional
@@ -130,8 +131,11 @@ def retrieve(
     user_id: Optional[str] = None,
     matter_id: Optional[str] = None
 ) -> List[Dict[str, Any]]:
+    start_time = time.time()
     chunks = get_all_chunks(doc_ids, user_id=user_id, matter_id=matter_id)
     if not chunks:
+        from backend.services.metrics import record_retrieval_latency
+        record_retrieval_latency(time.time() - start_time)
         return []
     
     eff_user = user_id or "default_lawyer"
@@ -146,6 +150,11 @@ def retrieve(
     bm25_ranked_indices = np.argsort(bm25_scores)[::-1]
     sparse_ranks = {chunks[idx]["chunk_id"]: rank + 1 for rank, idx in enumerate(bm25_ranked_indices)}
     
+    def _finish(res):
+        from backend.services.metrics import record_retrieval_latency
+        record_retrieval_latency(time.time() - start_time)
+        return res
+
     # If mode is sparse_only
     if mode == "sparse_only":
         results = []
@@ -154,7 +163,7 @@ def retrieve(
             item["sparse_score"] = float(bm25_scores[idx])
             item["score"] = float(bm25_scores[idx])
             results.append(item)
-        return results
+        return _finish(results)
 
     # 2. Dense Embeddings Retrieval (Cached chunk vectors)
     try:
@@ -176,7 +185,7 @@ def retrieve(
             item["dense_score"] = float(dense_scores[idx])
             item["score"] = float(dense_scores[idx])
             results.append(item)
-        return results
+        return _finish(results)
 
     # 3. Reciprocal Rank Fusion (RRF)
     # RRF score = 1 / (60 + rank_dense) + 1 / (60 + rank_sparse)
@@ -194,7 +203,7 @@ def retrieve(
     if mode == "hybrid":
         for c in top_candidates[:top_k]:
             c["score"] = float(rrf_scores[c["chunk_id"]])
-        return top_candidates[:top_k]
+        return _finish(top_candidates[:top_k])
 
     # 4. Cross-Encoder Rerank (top 10 candidates for 10x faster inference)
     try:
@@ -204,8 +213,8 @@ def retrieve(
         for i, c in enumerate(top_candidates):
             c["score"] = float(ce_scores[i])
         reranked = sorted(top_candidates, key=lambda c: c["score"], reverse=True)
-        return reranked[:top_k]
+        return _finish(reranked[:top_k])
     except Exception:
         for c in top_candidates[:top_k]:
             c["score"] = float(rrf_scores[c["chunk_id"]])
-        return top_candidates[:top_k]
+        return _finish(top_candidates[:top_k])

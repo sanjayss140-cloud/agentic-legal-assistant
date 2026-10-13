@@ -118,6 +118,21 @@ def init_db():
     );
     """)
 
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS ingestion_jobs (
+        job_id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL,
+        matter_id TEXT,
+        filename TEXT NOT NULL,
+        status TEXT DEFAULT 'queued',
+        progress_pct INTEGER DEFAULT 0,
+        error_message TEXT,
+        document_id TEXT,
+        created_at REAL NOT NULL,
+        updated_at REAL NOT NULL
+    );
+    """)
+
     conn.commit()
     conn.close()
 

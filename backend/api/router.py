@@ -8,11 +8,22 @@ import zipfile
 import secrets
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Union
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Response, Request
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Response, Request, BackgroundTasks
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, EmailStr
 
 from backend.ingestion.pipeline import ingest_document, get_db
+from backend.ingestion.async_worker import (
+    create_job,
+    get_job,
+    list_jobs,
+    submit_ingestion_task,
+)
+from backend.security.rate_limiter import (
+    enforce_rate_limit,
+    check_matter_document_quota,
+)
+from backend.services.metrics import generate_prometheus_metrics
 from backend.retrieval.engine import retrieve
 from backend.workflows.service import answer_query, review_case, draft_document, research_legal_issue
 from backend.app import config
@@ -575,12 +586,16 @@ async def upload_documents(
     files: List[UploadFile] = File(...),
     user: Dict[str, Any] = Depends(get_current_user)
 ):
+    enforce_rate_limit(user["id"])
+    matter_id = user.get("matter_id", "default_matter")
+    quota_ok, quota_msg = check_matter_document_quota(user["id"], matter_id)
+    if not quota_ok:
+        raise HTTPException(status_code=429, detail=quota_msg)
+
     corpus_dir = Path(config.CORPUS_DIR) / user["id"]
     corpus_dir.mkdir(parents=True, exist_ok=True)
     
     results = []
-    matter_id = user.get("matter_id", "default_matter")
-
     for file in files:
         safe_name = sanitize_filename(file.filename)
         ext = Path(safe_name).suffix.lower()
@@ -640,6 +655,86 @@ async def upload_documents(
             })
             
     return results[0] if len(results) == 1 else {"results": results}
+
+@router.post("/docs/upload-async")
+async def upload_documents_async(
+    background_tasks: BackgroundTasks,
+    files: List[UploadFile] = File(...),
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    enforce_rate_limit(user["id"])
+    matter_id = user.get("matter_id", "default_matter")
+    quota_ok, quota_msg = check_matter_document_quota(user["id"], matter_id)
+    if not quota_ok:
+        raise HTTPException(status_code=429, detail=quota_msg)
+
+    corpus_dir = Path(config.CORPUS_DIR) / user["id"]
+    corpus_dir.mkdir(parents=True, exist_ok=True)
+
+    results = []
+    for file in files:
+        safe_name = sanitize_filename(file.filename)
+        ext = Path(safe_name).suffix.lower()
+        if ext not in ALLOWED_EXTENSIONS:
+            raise HTTPException(status_code=400, detail=f"Unsupported file extension '{ext}'")
+
+        file_bytes = await file.read()
+        if len(file_bytes) > MAX_FILE_SIZE:
+            raise HTTPException(status_code=413, detail="File size exceeds 50MB limit.")
+
+        if file_bytes.startswith(b"MZ") or file_bytes.startswith(b"\x7fELF"):
+            raise HTTPException(status_code=400, detail="Security policy violation: Executable content detected.")
+
+        enc_bytes = encrypt_bytes(file_bytes)
+        file_path = corpus_dir / safe_name
+        file_path.write_bytes(enc_bytes)
+
+        job_id = create_job(user_id=user["id"], matter_id=matter_id, filename=safe_name)
+        submit_ingestion_task(
+            job_id=job_id,
+            file_path_str=str(file_path),
+            safe_name=safe_name,
+            user_id=user["id"],
+            matter_id=matter_id,
+            background_tasks=background_tasks
+        )
+        results.append({
+            "job_id": job_id,
+            "filename": safe_name,
+            "status": "queued",
+            "progress_pct": 0,
+            "message": "Document queued for asynchronous ingestion."
+        })
+
+    return results[0] if len(results) == 1 else {"jobs": results}
+
+@router.get("/jobs/{job_id}")
+def get_job_status(job_id: str, user: Dict[str, Any] = Depends(get_current_user)):
+    job = get_job(job_id, user_id=user["id"])
+    if not job:
+        raise HTTPException(status_code=404, detail="Ingestion job not found")
+    return job
+
+@router.get("/jobs/{job_id}/stream")
+async def stream_job_status(job_id: str, user: Dict[str, Any] = Depends(get_current_user)):
+    import asyncio
+    async def event_generator():
+        while True:
+            job = get_job(job_id, user_id=user["id"])
+            if not job:
+                yield f"data: {json.dumps({'error': 'Job not found'})}\n\n"
+                break
+            yield f"data: {json.dumps(job)}\n\n"
+            if job.get("status") in ("ready", "failed"):
+                break
+            await asyncio.sleep(0.1)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@router.get("/jobs")
+def list_user_jobs(user: Dict[str, Any] = Depends(get_current_user)):
+    jobs = list_jobs(user_id=user["id"], matter_id=user.get("matter_id"))
+    return {"jobs": jobs}
 
 @router.post("/docs/{doc_id}/override")
 def override_document(doc_id: str, user: Dict[str, Any] = Depends(get_current_user)):

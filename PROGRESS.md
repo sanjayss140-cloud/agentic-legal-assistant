@@ -127,13 +127,28 @@
 
 ---
 
+### [x] Phase 3: Reliability, Scale, Resilience & Telemetry
+- **Status**: Completed (9/9 dedicated Phase 3 tests passing, 51/51 full test suite passing)
+- **Capabilities Delivered**:
+  - **Alembic Schema & Migrations**: Schema migrations with Alembic (`001_initial_schema.py`) supporting both SQLite and PostgreSQL. Composite indices on `(user_id, matter_id)` and `(user_id, created_at)`. Migrations run cleanly up and down.
+  - **Background Worker Queue**: Asynchronous processing pipeline for large case files (`/api/docs/upload-async`) tracking fine-grained states (`queued` -> `extracting` -> `chunking` -> `embedding` -> `indexing` -> `ready` / `failed`). SSE live-streaming endpoint (`/api/jobs/{job_id}/stream`) and polling endpoint (`/api/jobs/{job_id}`).
+  - **Worker Resilience**: Automated stale-job recovery (`recover_stale_jobs`) on worker restart ensures zero dropped uploads.
+  - **Rate Limiting & Quotas**: Sliding-window per-user RPM limit with clean HTTP 429 and `Retry-After` header. Per-matter document quotas (`MAX_DOCS_PER_MATTER`) and daily token budget tracking (`DAILY_TOKEN_BUDGET`).
+  - **Groq API Resilience**: Automatic exponential backoff on 429/503; automatic model fallback from 70B (`llama-3.3-70b-versatile`) to 8B (`llama-3.1-8b-instant`) on rate limits; circuit breaker (`GroqCircuitBreaker`) tripping on 3 consecutive failures to fail-fast with *"LLM provider temporarily unavailable; cached verification is active"*, resetting automatically after recovery canary.
+  - **Structured JSON Logging**: Request logging middleware generating UUID `request_id`, recording user_id, matter_id, latency, token count, and status code without logging secrets or document text.
+  - **Prometheus Metrics**: `/metrics` OpenMetrics exposition for `http_requests_total`, `retrieval_latency_seconds` histogram buckets, `verification_outcomes_total` (Gate A, B, C pass/fail), and `ingestion_queue_depth`.
+
+---
+
 ## Test Execution Summary
-- **Pytest Suite (`backend/tests/`)**: **42 Passed** (0 Failed)
+- **Pytest Suite (`backend/tests/`)**: **51 Passed** (0 Failed)
 - **Phase 1 Auth & Isolation Suite (`test_phase1_auth_isolation.py`)**: **8/8 Passed**
 - **Phase 2 Lawyer Features Suite (`test_phase2_lawyer_features.py`)**: **9/9 Passed**
+- **Phase 3 Scale & Reliability Suite (`test_phase3_scale_reliability.py`)**: **9/9 Passed**
 - **Scope Isolation Tests (`test_scope_isolation.py`)**: **6/6 Passed**
 - **Robustness Tests (`test_robustness.py`)**: **11/11 Passed**
 - **Workflows & Health Tests**: **8/8 Passed**
 - **Fabricated Citations**: **0 (Zero)**
+
 
 
