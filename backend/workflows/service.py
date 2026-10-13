@@ -24,12 +24,16 @@ def clean_legal_text(text: str) -> str:
     t = re.sub(r'\s+', ' ', t).strip()
     return t
 
-def resolve_scope(doc_ids: Optional[List[str]]) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+def resolve_scope(
+    doc_ids: Optional[List[str]],
+    user_id: Optional[str] = None,
+    matter_id: Optional[str] = None
+) -> Tuple[List[Dict[str, Any]], Optional[str]]:
     """
     Strict Scope Isolation:
     - If doc_ids is empty list []: return clear prompt, run NOTHING.
-    - If doc_ids is None: automatically resolve to active ready legal documents.
-    - If doc_ids are provided: fetch ONLY those documents.
+    - If doc_ids is None: automatically resolve to active ready legal documents in user's matter.
+    - If doc_ids are provided: fetch ONLY those documents strictly owned by user in this matter.
     - If all selected docs are not_legal without user_override: return clear rejection, run NOTHING.
     """
     conn = get_db()
@@ -40,12 +44,20 @@ def resolve_scope(doc_ids: Optional[List[str]]) -> Tuple[List[Dict[str, Any]], O
         return [], "Please select at least one document to proceed. Tick a case file in the sidebar."
 
     if doc_ids is None:
-        cursor.execute("""
-        SELECT id, title, filename, file_size, content_hash, total_pages, court, date, case_number, parties, judge, statutes, status, doc_type, case_type, is_legal, user_override 
+        query = """
+        SELECT id, title, filename, file_size, content_hash, total_pages, court, date, case_number, parties, judge, statutes, status, doc_type, case_type, is_legal, user_override, user_id, matter_id 
         FROM documents 
         WHERE (is_legal = 1 OR user_override = 1) AND status = 'ready'
-        ORDER BY created_at DESC
-        """)
+        """
+        params = []
+        if user_id:
+            query += " AND user_id = ?"
+            params.append(user_id)
+        if matter_id:
+            query += " AND matter_id = ?"
+            params.append(matter_id)
+        query += " ORDER BY created_at DESC"
+        cursor.execute(query, params)
         rows = cursor.fetchall()
         conn.close()
         if not rows:
@@ -53,11 +65,20 @@ def resolve_scope(doc_ids: Optional[List[str]]) -> Tuple[List[Dict[str, Any]], O
         return [dict(r) for r in rows], None
 
     placeholders = ",".join(["?"] * len(doc_ids))
-    cursor.execute(f"""
-    SELECT id, title, filename, file_size, content_hash, total_pages, court, date, case_number, parties, judge, statutes, status, doc_type, case_type, is_legal, user_override 
+    query = f"""
+    SELECT id, title, filename, file_size, content_hash, total_pages, court, date, case_number, parties, judge, statutes, status, doc_type, case_type, is_legal, user_override, user_id, matter_id 
     FROM documents 
     WHERE id IN ({placeholders}) AND status = 'ready'
-    """, doc_ids)
+    """
+    params = list(doc_ids)
+    if user_id:
+        query += " AND user_id = ?"
+        params.append(user_id)
+    if matter_id:
+        query += " AND matter_id = ?"
+        params.append(matter_id)
+
+    cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
 
@@ -76,11 +97,22 @@ def is_greeting(text: str) -> bool:
     t = text.lower().strip()
     return any(t == g or t.startswith(g + " ") for g in greetings)
 
-def answer_query(question: str, doc_ids: Optional[List[str]] = None, session_id: str = "default") -> Dict[str, Any]:
+def answer_query(
+    question: str, 
+    doc_ids: Optional[List[str]] = None, 
+    session_id: str = "default",
+    user_id: Optional[str] = None,
+    matter_id: Optional[str] = None,
+    mask_pii: bool = False
+) -> Dict[str, Any]:
     t0 = time.time()
     
+    # Audit log
+    from backend.security.audit import log_audit
+    log_audit("workflow_chat", user_id=user_id, matter_id=matter_id)
+    
     # Scope resolution
-    scoped_docs, err_msg = resolve_scope(doc_ids)
+    scoped_docs, err_msg = resolve_scope(doc_ids, user_id=user_id, matter_id=matter_id)
     if err_msg:
         return {
             "answer": err_msg,
@@ -117,20 +149,27 @@ def answer_query(question: str, doc_ids: Optional[List[str]] = None, session_id:
             "trace": [{"stage": "anti_fabrication_gate", "status": "blocked"}]
         }
 
+    # Optional Redaction
+    token_map = {}
+    proc_question = question
+    if mask_pii:
+        from backend.security.redaction import mask_personal_identifiers
+        proc_question, token_map = mask_personal_identifiers(question)
+
     # Chat Session Memory & Query Rewriting
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT role, content FROM chat_history WHERE session_id = ? ORDER BY id ASC LIMIT 10", (session_id,))
+    cursor.execute("SELECT role, content FROM chat_history WHERE session_id = ? AND (user_id = ? OR ? IS NULL) ORDER BY id ASC LIMIT 10", (session_id, user_id, user_id))
     history = [dict(r) for r in cursor.fetchall()]
-    cursor.execute("INSERT INTO chat_history (session_id, role, content, created_at) VALUES (?, 'user', ?, ?)", (session_id, question, time.time()))
+    cursor.execute("INSERT INTO chat_history (session_id, role, content, created_at, user_id, matter_id) VALUES (?, 'user', ?, ?, ?, ?)", (session_id, question, time.time(), user_id or "default_lawyer", matter_id or "default_matter"))
     conn.commit()
     conn.close()
 
     groq_client = get_groq_client()
-    effective_query = rewrite_query_with_history(question, history, groq_client)
+    effective_query = rewrite_query_with_history(proc_question, history, groq_client)
 
-    # Retrieval strictly within scoped documents
-    chunks = retrieve(effective_query, doc_ids=scoped_doc_ids, mode="hybrid_rerank", top_k=6)
+    # Retrieval strictly within scoped documents and user/matter namespace
+    chunks = retrieve(effective_query, doc_ids=scoped_doc_ids, mode="hybrid_rerank", top_k=6, user_id=user_id, matter_id=matter_id)
 
     if not chunks:
         return {
@@ -310,8 +349,15 @@ def get_case_type_checklist(case_type: str, doc_title: str, text: str) -> List[D
         for name, found in items
     ]
 
-def review_case(doc_ids: Optional[List[str]] = None) -> Dict[str, Any]:
-    scoped_docs, err_msg = resolve_scope(doc_ids)
+def review_case(
+    doc_ids: Optional[List[str]] = None,
+    user_id: Optional[str] = None,
+    matter_id: Optional[str] = None
+) -> Dict[str, Any]:
+    from backend.security.audit import log_audit
+    log_audit("workflow_review", user_id=user_id, matter_id=matter_id)
+
+    scoped_docs, err_msg = resolve_scope(doc_ids, user_id=user_id, matter_id=matter_id)
     if err_msg:
         return {
             "error": err_msg,
@@ -542,8 +588,17 @@ def create_valid_docx(filepath: str, title: str, text: str):
         z.writestr("_rels/.rels", rels)
         z.writestr("word/document.xml", doc_xml)
 
-def draft_document(doc_ids: Optional[List[str]] = None, doc_type: str = "bail_application", user_facts: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-    scoped_docs, err_msg = resolve_scope(doc_ids)
+def draft_document(
+    doc_ids: Optional[List[str]] = None, 
+    doc_type: str = "bail_application", 
+    user_facts: Optional[Dict[str, str]] = None,
+    user_id: Optional[str] = None,
+    matter_id: Optional[str] = None
+) -> Dict[str, Any]:
+    from backend.security.audit import log_audit
+    log_audit("workflow_draft", user_id=user_id, matter_id=matter_id)
+
+    scoped_docs, err_msg = resolve_scope(doc_ids, user_id=user_id, matter_id=matter_id)
     if err_msg:
         return {
             "error": err_msg,
@@ -740,6 +795,20 @@ AND FOR THIS ACT OF KINDNESS, THE APPLICANT AS IN DUTY BOUND SHALL EVER PRAY.
     found_facts = sum(1 for f in pre_draft_report if f["status"] in ["FOUND", "USER-PROVIDED"])
     g_score = round((found_facts / max(len(pre_draft_report), 1)) * 100, 1)
 
+    # Save draft into database
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        draft_id = f"draft_{int(time.time())}_{secrets.token_hex(4)}"
+        cursor.execute("""
+        INSERT INTO drafts (id, user_id, matter_id, doc_type, draft_text, groundedness_score, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (draft_id, user_id or "default_lawyer", matter_id or "default_matter", doc_type, draft_text, g_score, time.time()))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
     return {
         "doc_type": doc_type,
         "sources_used": [doc_title],
@@ -753,8 +822,16 @@ AND FOR THIS ACT OF KINDNESS, THE APPLICANT AS IN DUTY BOUND SHALL EVER PRAY.
         }
     }
 
-def research_legal_issue(issue: str, doc_ids: Optional[List[str]] = None) -> Dict[str, Any]:
-    scoped_docs, err_msg = resolve_scope(doc_ids)
+def research_legal_issue(
+    issue: str, 
+    doc_ids: Optional[List[str]] = None,
+    user_id: Optional[str] = None,
+    matter_id: Optional[str] = None
+) -> Dict[str, Any]:
+    from backend.security.audit import log_audit
+    log_audit("workflow_research", user_id=user_id, matter_id=matter_id)
+
+    scoped_docs, err_msg = resolve_scope(doc_ids, user_id=user_id, matter_id=matter_id)
     if err_msg:
         return {
             "issue": issue,
@@ -778,7 +855,7 @@ def research_legal_issue(issue: str, doc_ids: Optional[List[str]] = None) -> Dic
             "suggested_search_terms": []
         }
 
-    chunks = retrieve(issue, doc_ids=scoped_doc_ids, mode="hybrid_rerank", top_k=6)
+    chunks = retrieve(issue, doc_ids=scoped_doc_ids, mode="hybrid_rerank", top_k=6, user_id=user_id, matter_id=matter_id)
     
     if not chunks:
         return {

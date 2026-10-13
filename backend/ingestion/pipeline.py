@@ -75,8 +75,16 @@ def init_db():
     );
     """)
     # Ensure all columns exist for existing databases
-    existing_cols = [c[1] for c in cursor.execute("PRAGMA table_info(documents)").fetchall()]
-    columns_to_add = [
+    # Ensure multi-tenant and matter columns exist for all tables
+    def add_col_if_missing(table, col_name, col_type):
+        cols = [c[1] for c in cursor.execute(f"PRAGMA table_info({table})").fetchall()]
+        if col_name not in cols:
+            try:
+                cursor.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_type}")
+            except Exception:
+                pass
+
+    doc_cols = [
         ("file_size", "INTEGER DEFAULT 0"),
         ("content_hash", "TEXT"),
         ("doc_type", "TEXT DEFAULT 'legal_case'"),
@@ -86,13 +94,29 @@ def init_db():
         ("ocr_warning", "TEXT"),
         ("language_warning", "TEXT"),
         ("user_override", "INTEGER DEFAULT 0"),
+        ("user_id", "TEXT DEFAULT 'default_lawyer'"),
+        ("matter_id", "TEXT DEFAULT 'default_matter'"),
+        ("is_encrypted", "INTEGER DEFAULT 1"),
+        ("storage_path", "TEXT"),
     ]
-    for col_name, col_def in columns_to_add:
-        if col_name not in existing_cols:
-            try:
-                cursor.execute(f"ALTER TABLE documents ADD COLUMN {col_name} {col_def}")
-            except Exception:
-                pass
+    for c_name, c_def in doc_cols:
+        add_col_if_missing("documents", c_name, c_def)
+
+    for tbl in ["chunks", "citation_registry", "chat_history"]:
+        add_col_if_missing(tbl, "user_id", "TEXT DEFAULT 'default_lawyer'")
+        add_col_if_missing(tbl, "matter_id", "TEXT DEFAULT 'default_matter'")
+
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS drafts (
+        id TEXT PRIMARY KEY,
+        user_id TEXT DEFAULT 'default_lawyer',
+        matter_id TEXT DEFAULT 'default_matter',
+        doc_type TEXT,
+        draft_text TEXT,
+        groundedness_score REAL,
+        created_at REAL
+    );
+    """)
 
     conn.commit()
     conn.close()
@@ -292,7 +316,8 @@ def extract_metadata(full_text: str, filename: str) -> Dict[str, str]:
 def extract_text_from_file(filepath: str) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """
     Extracts text page by page with full validation for PDF, TXT, DOCX.
-    Detects password protection, corrupted files, and runs OCR fallback.
+    Detects password protection, corrupted files, runs OCR fallback, and transparently
+    decrypts application-level encrypted files at rest in memory.
     """
     path = Path(filepath)
     ext = path.suffix.lower()
@@ -301,12 +326,24 @@ def extract_text_from_file(filepath: str) -> Tuple[List[Dict[str, Any]], Dict[st
     if file_size == 0:
         return [], {"error": "I couldn't read this file (empty file).", "error_code": "empty_file"}
 
+    with open(filepath, "rb") as f:
+        raw_bytes = f.read()
+
+    # Detect application-level encryption at rest (Fernet token prefix b"gAAAAA")
+    if raw_bytes.startswith(b"gAAAAA"):
+        from backend.security.crypto import decrypt_bytes
+        try:
+            file_bytes = decrypt_bytes(raw_bytes)
+        except Exception:
+            file_bytes = raw_bytes
+    else:
+        file_bytes = raw_bytes
+
     pages_data = []
 
     if ext == ".txt":
         try:
-            with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                content = f.read()
+            content = file_bytes.decode("utf-8", errors="ignore")
             pages_data.append({"page": 1, "text": content, "ocr": 0})
             return pages_data, {}
         except Exception as e:
@@ -316,7 +353,8 @@ def extract_text_from_file(filepath: str) -> Tuple[List[Dict[str, Any]], Dict[st
         try:
             import zipfile
             import xml.etree.ElementTree as ET
-            with zipfile.ZipFile(filepath) as docx:
+            import io
+            with zipfile.ZipFile(io.BytesIO(file_bytes)) as docx:
                 xml_content = docx.read('word/document.xml')
                 tree = ET.fromstring(xml_content)
                 paragraphs = []
@@ -332,7 +370,7 @@ def extract_text_from_file(filepath: str) -> Tuple[List[Dict[str, Any]], Dict[st
 
     elif ext == ".pdf":
         try:
-            doc = fitz.open(filepath)
+            doc = fitz.open(stream=file_bytes, filetype="pdf")
         except Exception:
             return [], {"error": "I couldn't read this file (corrupted or unreadable PDF).", "error_code": "corrupted"}
 
@@ -374,8 +412,15 @@ def extract_text_from_file(filepath: str) -> Tuple[List[Dict[str, Any]], Dict[st
     else:
         return [], {"error": "This file type isn't supported. Upload PDF, DOCX or TXT.", "error_code": "unsupported_type"}
 
-def ingest_document(filepath: str, doc_id: str, title: Optional[str] = None) -> Dict[str, Any]:
-    """Robust document ingestion with classification, duplicate handling, and validation."""
+def ingest_document(
+    filepath: str, 
+    doc_id: str, 
+    title: Optional[str] = None,
+    user_id: str = "default_lawyer",
+    matter_id: str = "default_matter",
+    encrypt_at_rest: bool = False
+) -> Dict[str, Any]:
+    """Robust document ingestion with classification, duplicate handling, multi-tenant matter isolation, and optional encryption at rest."""
     conn = get_db()
     cursor = conn.cursor()
     filename = Path(filepath).name
@@ -383,11 +428,11 @@ def ingest_document(filepath: str, doc_id: str, title: Optional[str] = None) -> 
     file_size = Path(filepath).stat().st_size
     content_hash = calculate_sha256(filepath)
 
-    # 1. Duplicate check (same name + size or content hash)
+    # 1. Duplicate check strictly scoped by user_id and matter_id
     cursor.execute("""
     SELECT id, title, doc_type, case_type, is_legal FROM documents 
-    WHERE content_hash = ? OR (filename = ? AND file_size = ?)
-    """, (content_hash, filename, file_size))
+    WHERE (content_hash = ? OR (filename = ? AND file_size = ?)) AND user_id = ? AND matter_id = ?
+    """, (content_hash, filename, file_size, user_id, matter_id))
     existing = cursor.fetchone()
     if existing:
         conn.close()
@@ -415,6 +460,19 @@ def ingest_document(filepath: str, doc_id: str, title: Optional[str] = None) -> 
             "error_code": err.get("error_code", "generic_error"),
             "filename": filename
         }
+
+    # Optional encryption at rest
+    if encrypt_at_rest:
+        try:
+            from backend.security.crypto import encrypt_bytes
+            with open(filepath, "rb") as f:
+                raw_bytes = f.read()
+            if not raw_bytes.startswith(b"gAAAAA"):
+                enc = encrypt_bytes(raw_bytes)
+                with open(filepath, "wb") as f:
+                    f.write(enc)
+        except Exception:
+            pass
 
     full_text_list = [p["text"] for p in pages_data]
     full_text = "\n".join(full_text_list)
@@ -447,37 +505,37 @@ def ingest_document(filepath: str, doc_id: str, title: Optional[str] = None) -> 
             else:
                 if current_chunk:
                     cid = f"{doc_id}:p{page_num}:c{chunk_idx}"
-                    chunks_to_insert.append((cid, doc_id, page_num, chunk_idx, current_chunk, p_info["ocr"]))
+                    chunks_to_insert.append((cid, doc_id, page_num, chunk_idx, current_chunk, p_info["ocr"], user_id, matter_id))
                     for c in extract_citations(current_chunk):
-                        citations_to_insert.append((c["text"], c["type"], doc_id, cid))
+                        citations_to_insert.append((c["text"], c["type"], doc_id, cid, user_id, matter_id))
                     chunk_idx += 1
                 current_chunk = para
         if current_chunk:
             cid = f"{doc_id}:p{page_num}:c{chunk_idx}"
-            chunks_to_insert.append((cid, doc_id, page_num, chunk_idx, current_chunk, p_info["ocr"]))
+            chunks_to_insert.append((cid, doc_id, page_num, chunk_idx, current_chunk, p_info["ocr"], user_id, matter_id))
             for c in extract_citations(current_chunk):
-                citations_to_insert.append((c["text"], c["type"], doc_id, cid))
+                citations_to_insert.append((c["text"], c["type"], doc_id, cid, user_id, matter_id))
 
-    # 7. Persist to DB
+    # 7. Persist to DB with user_id and matter_id
     cursor.execute("""
     INSERT OR REPLACE INTO documents 
-    (id, title, filename, file_size, content_hash, total_pages, court, date, case_number, parties, judge, statutes, status, doc_type, case_type, is_legal, classification_confidence, ocr_warning, language_warning, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?)
+    (id, title, filename, file_size, content_hash, total_pages, court, date, case_number, parties, judge, statutes, status, doc_type, case_type, is_legal, classification_confidence, ocr_warning, language_warning, user_id, matter_id, is_encrypted, storage_path, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         doc_id, doc_title, filename, file_size, content_hash, len(pages_data),
         meta["court"], meta["date"], meta["case_number"], meta["parties"],
         meta["judge"], meta["statutes"], doc_type, case_type, 1 if is_legal else 0,
-        confidence, ocr_warning, lang_warning, time.time()
+        confidence, ocr_warning, lang_warning, user_id, matter_id, 1 if encrypt_at_rest else 0, str(filepath), time.time()
     ))
 
     cursor.executemany("""
-    INSERT OR REPLACE INTO chunks (chunk_id, doc_id, page, chunk_index, text, ocr)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT OR REPLACE INTO chunks (chunk_id, doc_id, page, chunk_index, text, ocr, user_id, matter_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     """, chunks_to_insert)
 
     cursor.executemany("""
-    INSERT INTO citation_registry (citation_text, citation_type, doc_id, chunk_id)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO citation_registry (citation_text, citation_type, doc_id, chunk_id, user_id, matter_id)
+    VALUES (?, ?, ?, ?, ?, ?)
     """, citations_to_insert)
 
     conn.commit()
@@ -501,6 +559,8 @@ def ingest_document(filepath: str, doc_id: str, title: Optional[str] = None) -> 
         "confidence": round(confidence, 2),
         "ocr_warning": ocr_warning,
         "language_warning": lang_warning,
+        "user_id": user_id,
+        "matter_id": matter_id,
         "metadata": meta
     }
 

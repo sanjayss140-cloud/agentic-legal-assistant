@@ -1,17 +1,71 @@
 import os
+import re
+import io
+import json
 import shutil
 import time
+import zipfile
+import secrets
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Union
-from fastapi import APIRouter, UploadFile, File, HTTPException
-from fastapi.responses import FileResponse
-from pydantic import BaseModel
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Response, Request
+from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel, EmailStr
+
 from backend.ingestion.pipeline import ingest_document, get_db
 from backend.retrieval.engine import retrieve
 from backend.workflows.service import answer_query, review_case, draft_document, research_legal_issue
 from backend.app import config
+from backend.security.auth import (
+    create_user,
+    authenticate_user,
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+    setup_totp,
+    confirm_totp,
+    initiate_password_reset,
+    complete_password_reset,
+)
+from backend.security.crypto import encrypt_bytes, decrypt_bytes
+from backend.security.audit import log_audit, get_audit_logs
+from backend.security.deps import get_current_user, require_admin
 
 router = APIRouter()
+
+# ----------------- Pydantic Request Models -----------------
+
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+    role: Optional[str] = "lawyer"
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+    totp_code: Optional[str] = None
+
+class TotpConfirmRequest(BaseModel):
+    code: str
+
+class PasswordResetRequest(BaseModel):
+    email: str
+
+class PasswordResetConfirmRequest(BaseModel):
+    token: str
+    new_password: str
+
+class ConsentRequest(BaseModel):
+    consent: bool
+
+class UserSettingsRequest(BaseModel):
+    mask_pii_enabled: Optional[bool] = None
+    retention_days: Optional[int] = None
+
+class MatterCreateRequest(BaseModel):
+    name: str
+    client_ref: Optional[str] = None
+    notes: Optional[str] = None
 
 class AskRequest(BaseModel):
     question: str
@@ -36,124 +90,672 @@ class ResearchRequest(BaseModel):
     issue: str
     doc_ids: Optional[List[str]] = None
 
+# ----------------- Phase 1: Authentication Endpoints -----------------
+
+@router.post("/auth/register")
+def register(req: RegisterRequest, response: Response):
+    success, msg, user = create_user(req.email, req.password, role=req.role or "lawyer")
+    if not success:
+        raise HTTPException(status_code=400, detail=msg)
+    
+    # Generate tokens
+    access_token = create_access_token(user["id"], user["email"], user["role"])
+    refresh_token = create_refresh_token(user["id"])
+
+    # Set httpOnly cookies
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        max_age=1800,
+        samesite="lax",
+        secure=False  # Allow local pilot testing, set True in HTTPS prod
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        max_age=7 * 86400,
+        samesite="lax",
+        secure=False
+    )
+    
+    log_audit("user_register", user_id=user["id"], target_type="user", target_id=user["id"])
+    return {"status": "ok", "message": msg, "user": user, "token": access_token}
+
+@router.post("/auth/login")
+def login(req: LoginRequest, response: Response):
+    success, msg, user_data = authenticate_user(req.email, req.password, req.totp_code)
+    if not success:
+        if msg == "2FA_REQUIRED":
+            return {"status": "2fa_required", "user_id": user_data["user_id"]}
+        if "locked" in msg.lower():
+            log_audit("login_locked", user_id=req.email)
+            raise HTTPException(status_code=429, detail=msg)
+        log_audit("login_failed", user_id=req.email)
+        raise HTTPException(status_code=401, detail=msg)
+
+    # Fetch user's active matter
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM matters WHERE user_id = ? ORDER BY created_at ASC LIMIT 1", (user_data["id"],))
+    m_row = cursor.fetchone()
+    conn.close()
+    active_matter_id = m_row["id"] if m_row else f"matter_{user_data['id'][:8]}"
+
+    access_token = create_access_token(user_data["id"], user_data["email"], user_data["role"], matter_id=active_matter_id)
+    refresh_token = create_refresh_token(user_data["id"])
+
+    response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        max_age=1800,
+        samesite="lax",
+        secure=False
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        max_age=7 * 86400,
+        samesite="lax",
+        secure=False
+    )
+
+    log_audit("login_success", user_id=user_data["id"])
+    user_out = {
+        "id": user_data["id"],
+        "email": user_data["email"],
+        "role": user_data["role"],
+        "consent_given": user_data["consent_given"],
+        "mask_pii_enabled": user_data["mask_pii_enabled"],
+        "matter_id": active_matter_id
+    }
+    return {"status": "ok", "message": "Login successful", "user": user_out, "token": access_token}
+
+@router.post("/auth/logout")
+def logout(response: Response, user: Dict[str, Any] = Depends(get_current_user)):
+    response.delete_cookie(key="access_token")
+    response.delete_cookie(key="refresh_token")
+    log_audit("logout", user_id=user["id"])
+    return {"status": "ok", "message": "Logged out successfully"}
+
+@router.get("/auth/me")
+def get_me(user: Dict[str, Any] = Depends(get_current_user)):
+    return {"user": user}
+
+@router.post("/auth/refresh")
+def refresh_session(request: Request, response: Response):
+    refresh_token = request.cookies.get("refresh_token")
+    if not refresh_token and "Authorization" in request.headers:
+        auth_h = request.headers["Authorization"]
+        if auth_h.startswith("Bearer "):
+            refresh_token = auth_h.split(" ", 1)[1].strip()
+
+    if not refresh_token:
+        raise HTTPException(status_code=401, detail="Refresh token required")
+
+    payload = decode_token(refresh_token)
+    if not payload or payload.get("type") != "refresh":
+        raise HTTPException(status_code=401, detail="Refresh token expired or invalid")
+
+    user_id = payload.get("sub")
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, email, role FROM users WHERE id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    new_access_token = create_access_token(row["id"], row["email"], row["role"])
+    response.set_cookie(
+        key="access_token",
+        value=new_access_token,
+        httponly=True,
+        max_age=1800,
+        samesite="lax",
+        secure=False
+    )
+    return {"status": "ok", "token": new_access_token}
+
+@router.post("/auth/2fa/setup")
+def setup_2fa(user: Dict[str, Any] = Depends(get_current_user)):
+    secret, uri = setup_totp(user["id"])
+    log_audit("2fa_setup_initiated", user_id=user["id"])
+    return {"status": "ok", "secret": secret, "provisioning_uri": uri}
+
+@router.post("/auth/2fa/confirm")
+def confirm_2fa(req: TotpConfirmRequest, user: Dict[str, Any] = Depends(get_current_user)):
+    if confirm_totp(user["id"], req.code):
+        log_audit("2fa_activated", user_id=user["id"])
+        return {"status": "ok", "message": "Two-factor authentication successfully enabled."}
+    raise HTTPException(status_code=400, detail="Invalid verification code. Please try again.")
+
+@router.post("/auth/password-reset/request")
+def request_password_reset(req: PasswordResetRequest):
+    initiate_password_reset(req.email)
+    log_audit("password_reset_requested", user_id=req.email)
+    return {"status": "ok", "message": "If the email is registered, a password reset link has been dispatched to the console/email service."}
+
+@router.post("/auth/password-reset/confirm")
+def confirm_password_reset(req: PasswordResetConfirmRequest):
+    success, msg = complete_password_reset(req.token, req.new_password)
+    if not success:
+        raise HTTPException(status_code=400, detail=msg)
+    log_audit("password_reset_completed", target_id=req.token[:8])
+    return {"status": "ok", "message": msg}
+
+# ----------------- Phase 1: Matters Management -----------------
+
+@router.post("/matters")
+def create_matter(req: MatterCreateRequest, user: Dict[str, Any] = Depends(get_current_user)):
+    matter_id = f"matter_{secrets.token_hex(6)}"
+    now = time.time()
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+    INSERT INTO matters (id, user_id, name, client_ref, notes, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+    """, (matter_id, user["id"], req.name.strip(), req.client_ref, req.notes, now))
+    conn.commit()
+    conn.close()
+
+    log_audit("matter_created", user_id=user["id"], matter_id=matter_id)
+    return {
+        "status": "ok",
+        "matter": {
+            "id": matter_id,
+            "user_id": user["id"],
+            "name": req.name.strip(),
+            "client_ref": req.client_ref,
+            "notes": req.notes,
+            "created_at": now
+        }
+    }
+
+@router.get("/matters")
+def list_matters(user: Dict[str, Any] = Depends(get_current_user)):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+    SELECT m.id, m.name, m.client_ref, m.notes, m.created_at,
+           COUNT(DISTINCT d.id) AS document_count
+    FROM matters m
+    LEFT JOIN documents d ON d.matter_id = m.id AND d.user_id = m.user_id
+    WHERE m.user_id = ?
+    GROUP BY m.id
+    ORDER BY m.created_at DESC
+    """, (user["id"],))
+    rows = cursor.fetchall()
+    conn.close()
+    return {"matters": [dict(r) for r in rows]}
+
+@router.get("/matters/{matter_id}")
+def get_matter(matter_id: str, user: Dict[str, Any] = Depends(get_current_user)):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name, client_ref, notes, created_at FROM matters WHERE id = ? AND user_id = ?", (matter_id, user["id"]))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(status_code=404, detail="Matter not found or access denied")
+    
+    matter = dict(row)
+    cursor.execute("SELECT id, title, total_pages, doc_type, case_type FROM documents WHERE matter_id = ? AND user_id = ?", (matter_id, user["id"]))
+    docs = [dict(r) for r in cursor.fetchall()]
+    matter["documents"] = docs
+    conn.close()
+    return {"matter": matter}
+
+@router.delete("/matters/{matter_id}")
+def delete_matter(matter_id: str, user: Dict[str, Any] = Depends(get_current_user)):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM matters WHERE id = ? AND user_id = ?", (matter_id, user["id"]))
+    if not cursor.fetchone():
+        conn.close()
+        raise HTTPException(status_code=404, detail="Matter not found or access denied")
+
+    # Get documents to delete files on disk
+    cursor.execute("SELECT storage_path FROM documents WHERE matter_id = ? AND user_id = ?", (matter_id, user["id"]))
+    doc_rows = cursor.fetchall()
+    for d in doc_rows:
+        sp = d["storage_path"]
+        if sp:
+            fp = Path(sp)
+            if fp.exists():
+                try:
+                    fp.unlink()
+                except Exception:
+                    pass
+
+    # Delete records
+    cursor.execute("DELETE FROM chunks WHERE user_id = ? AND matter_id = ?", (user["id"], matter_id))
+    cursor.execute("DELETE FROM documents WHERE user_id = ? AND matter_id = ?", (user["id"], matter_id))
+    cursor.execute("DELETE FROM drafts WHERE user_id = ? AND matter_id = ?", (user["id"], matter_id))
+    cursor.execute("DELETE FROM chat_history WHERE user_id = ? AND matter_id = ?", (user["id"], matter_id))
+    cursor.execute("DELETE FROM matters WHERE id = ? AND user_id = ?", (matter_id, user["id"]))
+    conn.commit()
+    conn.close()
+
+    # Clear caches
+    from backend.retrieval.engine import _chunk_embedding_cache, _bm25_cache
+    _bm25_cache.clear()
+
+    log_audit("matter_deleted", user_id=user["id"], matter_id=matter_id)
+    return {"status": "ok", "message": f"Matter {matter_id} and all its documents deleted."}
+
+@router.post("/matters/{matter_id}/select")
+def select_active_matter(matter_id: str, response: Response, user: Dict[str, Any] = Depends(get_current_user)):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name FROM matters WHERE id = ? AND user_id = ?", (matter_id, user["id"]))
+    matter_row = cursor.fetchone()
+    conn.close()
+    if not matter_row:
+        raise HTTPException(status_code=404, detail="Matter not found or access denied")
+
+    new_token = create_access_token(user["id"], user["email"], user["role"], matter_id=matter_id)
+    response.set_cookie(
+        key="access_token",
+        value=new_token,
+        httponly=True,
+        max_age=1800,
+        samesite="lax",
+        secure=False
+    )
+    return {"status": "ok", "active_matter_id": matter_id, "name": matter_row["name"], "token": new_token}
+
+# ----------------- Phase 1: Privacy, Consent & Data Rights -----------------
+
+@router.post("/user/consent")
+def grant_consent(req: ConsentRequest, user: Dict[str, Any] = Depends(get_current_user)):
+    conn = get_db()
+    cursor = conn.cursor()
+    now = time.time()
+    cursor.execute("UPDATE users SET consent_given = ?, consent_timestamp = ? WHERE id = ?", (1 if req.consent else 0, now, user["id"]))
+    conn.commit()
+    conn.close()
+    log_audit("user_consent_updated", user_id=user["id"], target_type="consent", target_id=str(req.consent))
+    return {"status": "ok", "consent_given": req.consent}
+
+@router.post("/user/settings")
+def update_user_settings(req: UserSettingsRequest, user: Dict[str, Any] = Depends(get_current_user)):
+    conn = get_db()
+    cursor = conn.cursor()
+    if req.mask_pii_enabled is not None:
+        cursor.execute("UPDATE users SET mask_pii_enabled = ? WHERE id = ?", (1 if req.mask_pii_enabled else 0, user["id"]))
+    if req.retention_days is not None:
+        cursor.execute("UPDATE users SET retention_days = ? WHERE id = ?", (req.retention_days, user["id"]))
+    conn.commit()
+    conn.close()
+    log_audit("user_settings_updated", user_id=user["id"])
+    return {"status": "ok", "message": "Settings updated"}
+
+@router.get("/user/export-data")
+def export_user_data(user: Dict[str, Any] = Depends(get_current_user)):
+    """Export complete user dossier into encrypted/passworded or clean ZIP archive."""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT id, name, client_ref, notes, created_at FROM matters WHERE user_id = ?", (user["id"],))
+    matters = [dict(r) for r in cursor.fetchall()]
+
+    cursor.execute("SELECT id, matter_id, title, filename, total_pages, doc_type, case_type, created_at, storage_path FROM documents WHERE user_id = ?", (user["id"],))
+    docs = [dict(r) for r in cursor.fetchall()]
+
+    cursor.execute("SELECT id, matter_id, session_id, role, content, created_at FROM chat_history WHERE user_id = ?", (user["id"],))
+    chats = [dict(r) for r in cursor.fetchall()]
+
+    cursor.execute("SELECT id, matter_id, doc_type, draft_text, groundedness_score, created_at FROM drafts WHERE user_id = ?", (user["id"],))
+    drafts = [dict(r) for r in cursor.fetchall()]
+
+    cursor.execute("SELECT action, matter_id, target_type, target_id, timestamp FROM audit_logs WHERE user_id = ?", (user["id"],))
+    audits = [dict(r) for r in cursor.fetchall()]
+
+    conn.close()
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("profile.json", json.dumps({"user_id": user["id"], "email": user["email"], "role": user["role"]}, indent=2))
+        zf.writestr("matters.json", json.dumps(matters, indent=2))
+        zf.writestr("documents.json", json.dumps(docs, indent=2))
+        zf.writestr("chat_history.json", json.dumps(chats, indent=2))
+        zf.writestr("drafts.json", json.dumps(drafts, indent=2))
+        zf.writestr("audit_logs.json", json.dumps(audits, indent=2))
+
+        # Add decrypted documents into archive
+        for d in docs:
+            sp = d.get("storage_path")
+            if sp:
+                fp = Path(sp)
+                if fp.exists():
+                    try:
+                        file_bytes = fp.read_bytes()
+                        try:
+                            decrypted = decrypt_bytes(file_bytes)
+                        except Exception:
+                            decrypted = file_bytes
+                        zf.writestr(f"documents/{d['title']}", decrypted)
+                    except Exception:
+                        pass
+
+    zip_buffer.seek(0)
+    log_audit("data_exported", user_id=user["id"])
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename=lexground_export_{user['id'][:8]}.zip"}
+    )
+
+@router.delete("/user/account")
+def delete_account(response: Response, user: Dict[str, Any] = Depends(get_current_user)):
+    """Permanent Account Deletion (DPDP Act compliance): removes all files, DB records, embeddings."""
+    user_id = user["id"]
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Find and delete physical files
+    cursor.execute("SELECT storage_path FROM documents WHERE user_id = ?", (user_id,))
+    file_rows = cursor.fetchall()
+    for f in file_rows:
+        sp = f["storage_path"]
+        if sp:
+            fp = Path(sp)
+            if fp.exists():
+                try:
+                    fp.unlink()
+                except Exception:
+                    pass
+
+    # Delete all DB entities
+    cursor.execute("DELETE FROM chunks WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM documents WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM drafts WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM chat_history WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM citation_registry WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM matters WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM password_resets WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM audit_logs WHERE user_id = ?", (user_id,))
+    cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
+
+    conn.commit()
+    conn.close()
+
+    # Clear caches
+    from backend.retrieval.engine import _chunk_embedding_cache, _bm25_cache
+    for k in list(_chunk_embedding_cache.keys()):
+        if isinstance(k, tuple) and k[0] == user_id:
+            del _chunk_embedding_cache[k]
+    _bm25_cache.clear()
+
+    # Clear cookies
+    response.delete_cookie("access_token")
+    response.delete_cookie("refresh_token")
+
+    return {"status": "ok", "message": "Account and all associated records permanently purged."}
+
+@router.get("/audit-logs")
+def get_audit_trail(user: Dict[str, Any] = Depends(get_current_user)):
+    if user.get("role") == "admin":
+        logs = get_audit_logs(limit=150)
+    else:
+        logs = get_audit_logs(user_id=user["id"], limit=100)
+    return {"audit_logs": logs}
+
+# ----------------- Scoped Document & Ingestion Workflows -----------------
+
+ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt"}
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+
+def sanitize_filename(filename: str) -> str:
+    name = Path(filename).name
+    # Keep only safe alphanumeric, dots, underscores, dashes
+    sanitized = re.sub(r'[^a-zA-Z0-9_.-]', '_', name)
+    return sanitized or "document.pdf"
+
 @router.post("/docs/upload")
-async def upload_documents(files: List[UploadFile] = File(...)):
-    corpus_dir = Path(config.CORPUS_DIR)
+async def upload_documents(
+    files: List[UploadFile] = File(...),
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    corpus_dir = Path(config.CORPUS_DIR) / user["id"]
     corpus_dir.mkdir(parents=True, exist_ok=True)
     
     results = []
+    matter_id = user.get("matter_id", "default_matter")
+
     for file in files:
-        file_path = corpus_dir / file.filename
+        safe_name = sanitize_filename(file.filename)
+        ext = Path(safe_name).suffix.lower()
+        if ext not in ALLOWED_EXTENSIONS:
+            results.append({
+                "status": "error",
+                "filename": file.filename,
+                "message": f"Unsupported file extension '{ext}'. Only PDF, DOCX, and TXT are permitted.",
+                "error_code": "unsupported_media_type"
+            })
+            continue
+
+        file_bytes = await file.read()
+        if len(file_bytes) > MAX_FILE_SIZE:
+            results.append({
+                "status": "error",
+                "filename": file.filename,
+                "message": f"File size exceeds 50MB limit.",
+                "error_code": "file_too_large"
+            })
+            continue
+
+        # Malware safety: Reject executable headers (e.g. PE 'MZ', ELF, shell scripts)
+        if file_bytes.startswith(b"MZ") or file_bytes.startswith(b"\x7fELF"):
+            results.append({
+                "status": "error",
+                "filename": file.filename,
+                "message": "Security policy violation: Executable content detected.",
+                "error_code": "malicious_content"
+            })
+            continue
+
+        # Encrypt at rest
+        enc_bytes = encrypt_bytes(file_bytes)
+        file_path = corpus_dir / safe_name
+        file_path.write_bytes(enc_bytes)
+
         try:
-            with open(file_path, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
-                
-            doc_id = f"doc_{int(time.time())}_{Path(file.filename).stem[:8]}"
-            res = ingest_document(str(file_path), doc_id=doc_id, title=file.filename)
+            doc_id = f"doc_{int(time.time())}_{secrets.token_hex(4)}"
+            res = ingest_document(
+                str(file_path),
+                doc_id=doc_id,
+                title=safe_name,
+                user_id=user["id"],
+                matter_id=matter_id,
+                encrypt_at_rest=True
+            )
+            res["id"] = res["doc_id"]
+            log_audit("document_uploaded", user_id=user["id"], matter_id=matter_id, target_type="document", target_id=doc_id)
             results.append(res)
         except Exception as e:
             results.append({
                 "status": "error",
-                "filename": file.filename,
+                "filename": safe_name,
                 "message": f"Processing error: {str(e)}",
                 "error_code": "unhandled_exception"
             })
             
-    # Return single object if 1 file uploaded, list otherwise
     return results[0] if len(results) == 1 else {"results": results}
 
 @router.post("/docs/{doc_id}/override")
-def override_document(doc_id: str):
+def override_document(doc_id: str, user: Dict[str, Any] = Depends(get_current_user)):
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("UPDATE documents SET user_override = 1, is_legal = 1 WHERE id = ?", (doc_id,))
+    cursor.execute("UPDATE documents SET user_override = 1, is_legal = 1 WHERE id = ? AND user_id = ?", (doc_id, user["id"]))
+    affected = cursor.rowcount
     conn.commit()
     conn.close()
+    if affected == 0:
+        raise HTTPException(status_code=404, detail="Document not found or access denied")
+    log_audit("document_override", user_id=user["id"], target_id=doc_id)
     return {"status": "ok", "doc_id": doc_id, "message": "User override applied. Document enabled for legal workflows."}
 
 @router.get("/docs")
-def list_documents():
+def list_documents(user: Dict[str, Any] = Depends(get_current_user)):
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("""
-    SELECT id, title, filename, total_pages, court, date, case_number, status, doc_type, case_type, is_legal, ocr_warning, language_warning, user_override, created_at 
-    FROM documents 
-    ORDER BY created_at DESC
-    """)
+    matter_id = user.get("matter_id")
+    
+    if matter_id:
+        cursor.execute("""
+        SELECT id, title, filename, total_pages, court, date, case_number, status, doc_type, case_type, is_legal, ocr_warning, language_warning, user_override, created_at 
+        FROM documents 
+        WHERE user_id = ? AND matter_id = ?
+        ORDER BY created_at DESC
+        """, (user["id"], matter_id))
+    else:
+        cursor.execute("""
+        SELECT id, title, filename, total_pages, court, date, case_number, status, doc_type, case_type, is_legal, ocr_warning, language_warning, user_override, created_at 
+        FROM documents 
+        WHERE user_id = ?
+        ORDER BY created_at DESC
+        """, (user["id"],))
+
     rows = cursor.fetchall()
     conn.close()
     return {"documents": [dict(r) for r in rows]}
 
 @router.get("/docs/{doc_id}/status")
-def get_doc_status(doc_id: str):
+def get_doc_status(doc_id: str, user: Dict[str, Any] = Depends(get_current_user)):
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, title, status, total_pages, doc_type, case_type, is_legal FROM documents WHERE id = ?", (doc_id,))
+    cursor.execute("SELECT id, title, status, total_pages, doc_type, case_type, is_legal FROM documents WHERE id = ? AND user_id = ?", (doc_id, user["id"]))
     row = cursor.fetchone()
     conn.close()
     if not row:
-        raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(status_code=404, detail="Document not found or access denied")
     return dict(row)
 
 @router.post("/retrieve")
-def retrieve_endpoint(req: RetrieveRequest):
-    chunks = retrieve(req.query, doc_ids=req.doc_ids, mode=req.mode or "hybrid_rerank")
+def retrieve_endpoint(req: RetrieveRequest, user: Dict[str, Any] = Depends(get_current_user)):
+    chunks = retrieve(
+        req.query,
+        doc_ids=req.doc_ids,
+        mode=req.mode or "hybrid_rerank",
+        user_id=user["id"],
+        matter_id=user.get("matter_id")
+    )
     return {"chunks": chunks, "count": len(chunks)}
 
 @router.post("/ask")
-def ask_endpoint(req: AskRequest):
-    return answer_query(req.question, doc_ids=req.doc_ids, session_id=req.session_id or "default")
+def ask_endpoint(req: AskRequest, user: Dict[str, Any] = Depends(get_current_user)):
+    return answer_query(
+        req.question,
+        doc_ids=req.doc_ids,
+        session_id=req.session_id or "default",
+        user_id=user["id"],
+        matter_id=user.get("matter_id"),
+        mask_pii=bool(user.get("mask_pii_enabled", 0))
+    )
 
 @router.post("/chat")
-def chat_endpoint(req: AskRequest):
-    return answer_query(req.question, doc_ids=req.doc_ids, session_id=req.session_id or "default")
+def chat_endpoint(req: AskRequest, user: Dict[str, Any] = Depends(get_current_user)):
+    return answer_query(
+        req.question,
+        doc_ids=req.doc_ids,
+        session_id=req.session_id or "default",
+        user_id=user["id"],
+        matter_id=user.get("matter_id"),
+        mask_pii=bool(user.get("mask_pii_enabled", 0))
+    )
 
 @router.post("/review")
-def review_endpoint(req: ReviewRequest):
-    return review_case(doc_ids=req.doc_ids)
+def review_endpoint(req: ReviewRequest, user: Dict[str, Any] = Depends(get_current_user)):
+    return review_case(
+        doc_ids=req.doc_ids,
+        user_id=user["id"],
+        matter_id=user.get("matter_id")
+    )
 
 @router.post("/draft")
-def draft_endpoint(req: DraftRequest):
-    return draft_document(doc_ids=req.doc_ids, doc_type=req.doc_type or "bail_application", user_facts=req.user_facts)
+def draft_endpoint(req: DraftRequest, user: Dict[str, Any] = Depends(get_current_user)):
+    return draft_document(
+        doc_ids=req.doc_ids,
+        doc_type=req.doc_type or "bail_application",
+        user_facts=req.user_facts,
+        user_id=user["id"],
+        matter_id=user.get("matter_id")
+    )
 
 @router.post("/research")
-def research_endpoint(req: ResearchRequest):
-    return research_legal_issue(req.issue, doc_ids=req.doc_ids)
+def research_endpoint(req: ResearchRequest, user: Dict[str, Any] = Depends(get_current_user)):
+    return research_legal_issue(
+        req.issue,
+        doc_ids=req.doc_ids,
+        user_id=user["id"],
+        matter_id=user.get("matter_id")
+    )
 
 @router.post("/clear-all")
-def clear_all_data():
+def clear_all_data(user: Dict[str, Any] = Depends(get_current_user)):
+    """Clears documents, indexes, and chat history strictly for the authenticated user."""
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("DELETE FROM chat_history")
-    cursor.execute("DELETE FROM citation_registry")
-    cursor.execute("DELETE FROM chunks")
-    cursor.execute("DELETE FROM documents")
+    matter_id = user.get("matter_id")
+
+    if matter_id:
+        cursor.execute("DELETE FROM chat_history WHERE user_id = ? AND matter_id = ?", (user["id"], matter_id))
+        cursor.execute("DELETE FROM citation_registry WHERE user_id = ? AND matter_id = ?", (user["id"], matter_id))
+        cursor.execute("DELETE FROM chunks WHERE user_id = ? AND matter_id = ?", (user["id"], matter_id))
+        cursor.execute("DELETE FROM documents WHERE user_id = ? AND matter_id = ?", (user["id"], matter_id))
+        cursor.execute("DELETE FROM drafts WHERE user_id = ? AND matter_id = ?", (user["id"], matter_id))
+    else:
+        cursor.execute("DELETE FROM chat_history WHERE user_id = ?", (user["id"],))
+        cursor.execute("DELETE FROM citation_registry WHERE user_id = ?", (user["id"],))
+        cursor.execute("DELETE FROM chunks WHERE user_id = ?", (user["id"],))
+        cursor.execute("DELETE FROM documents WHERE user_id = ?", (user["id"],))
+        cursor.execute("DELETE FROM drafts WHERE user_id = ?", (user["id"],))
+
     conn.commit()
     conn.close()
     
-    # Clear in-memory caches
+    # In-memory index cache eviction for this user
     from backend.retrieval.engine import _chunk_embedding_cache, _bm25_cache
-    _chunk_embedding_cache.clear()
+    for k in list(_chunk_embedding_cache.keys()):
+        if isinstance(k, tuple) and k[0] == user["id"]:
+            del _chunk_embedding_cache[k]
     _bm25_cache.clear()
     
-    return {"status": "ok", "message": "All documents, index chunks, citation registry, and chat history have been cleared."}
+    log_audit("data_cleared", user_id=user["id"], matter_id=matter_id)
+    return {"status": "ok", "message": "All documents, index chunks, citation registry, and chat history have been cleared for this matter."}
 
 @router.post("/sample/load")
-def load_sample_case():
+def load_sample_case(user: Dict[str, Any] = Depends(get_current_user)):
     sample_file = Path(config.CORPUS_DIR) / "case1_bail_order.pdf"
     if not sample_file.exists():
         sample_file = Path(config.BASE_DIR) / "data" / "corpus" / "case1_bail_order.pdf"
     if not sample_file.exists():
         raise HTTPException(status_code=404, detail="Sample case file not found on disk.")
     
-    res = ingest_document(str(sample_file), doc_id="doc_sample_case", title="SAMPLE (cached): Vikram Sharma v. State (Bail Order)")
+    matter_id = user.get("matter_id", "default_matter")
+    doc_id = f"doc_sample_{user['id'][:8]}"
+    res = ingest_document(
+        str(sample_file),
+        doc_id=doc_id,
+        title="SAMPLE (cached): Vikram Sharma v. State (Bail Order)",
+        user_id=user["id"],
+        matter_id=matter_id,
+        encrypt_at_rest=False
+    )
+    log_audit("sample_case_loaded", user_id=user["id"], matter_id=matter_id, target_id=doc_id)
     return {"status": "ok", "message": "Sample case loaded successfully.", "document": res}
 
 @router.get("/export/draft.docx")
-def download_draft_docx():
+def download_draft_docx(user: Dict[str, Any] = Depends(get_current_user)):
     docx_file = Path(config.BASE_DIR) / "frontend" / "dist" / "draft.docx"
     if not docx_file.exists():
-        draft_document()
+        draft_document(user_id=user["id"], matter_id=user.get("matter_id"))
     return FileResponse(docx_file, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", filename="Legal_Draft.docx")
 
 @router.get("/eval/results")

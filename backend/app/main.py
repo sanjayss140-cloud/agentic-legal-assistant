@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse
 from groq import Groq
 from backend.app import config
 from backend.api.router import router as api_router
+from backend.security.middleware import SecurityHeadersMiddleware
 
 app = FastAPI(
     title="Agentic Legal Assistant API",
@@ -21,9 +22,17 @@ app = FastAPI(
     version="0.1.0",
 )
 
+# Enforce security headers
+app.add_middleware(SecurityHeadersMiddleware)
+
+allowed_origins = os.getenv(
+    "CORS_ORIGINS", 
+    "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173,http://localhost:8000,http://127.0.0.1:8000"
+).split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[o.strip() for o in allowed_origins if o.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

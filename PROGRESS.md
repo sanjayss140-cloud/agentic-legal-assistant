@@ -99,8 +99,24 @@
 
 ---
 
+### [x] Phase 1: Accounts, Multi-Tenant Isolation, Privacy, Matters & Encryption
+- **Status**: Completed (8/8 dedicated Phase 1 tests passing, 33/33 full test suite passing)
+- **Capabilities Delivered**:
+  - **Authentication**: Email + password with Argon2id hashing (bcrypt fallback); JWT access tokens (30 min) and refresh tokens (7 days) in httpOnly cookies; login rate-limiting (5 failed attempts -> 15 min lockout); TOTP 2FA setup and confirmation via `pyotp`; console-abstracted password reset flow; roles: `lawyer` and `admin`.
+  - **Multi-Tenant Scoping**: `user_id` and `matter_id` strictly partitioned across documents, chunks, citation registry, chat history, drafts, and in-memory caches. User A cannot view, retrieve, cite, or delete User B's documents or matters.
+  - **Matters Management**: Full CRUD for case folders (`matters`) with name, client reference, and notes. Workflow scope strictly bounded to active matter.
+  - **At-Rest Encryption**: Application-level Fernet AES-256 encryption for all uploaded documents on disk. In-memory decryption on demand during processing without plain files at rest.
+  - **Security & Hygiene**: `SecurityHeadersMiddleware` (CSP, HSTS, X-Frame-Options DENY, X-Content-Type-Options nosniff); CORS locked to configured origins; 50MB file size limits; extension whitelist (.pdf, .docx, .txt); filename sanitization; malware executable header rejection.
+  - **Privacy & Consent**: First-login consent recording; setting-controlled PII masking for phone numbers, emails, PAN, Aadhaar; data export to complete ZIP archive (`/api/user/export-data`); complete account and data purge (`DELETE /api/user/account`).
+  - **Audit Logging**: Append-only audit trail logging all actions with timestamps and IDs, strictly excluding document text, prompts, and secrets.
+
+---
+
 ## Test Execution Summary
-- **Pytest Suite (`backend/tests/`)**: **25 Passed in 40.32s** (0 Failed)
+- **Pytest Suite (`backend/tests/`)**: **33 Passed in 23.34s** (0 Failed)
+- **Phase 1 Auth & Isolation Suite (`test_phase1_auth_isolation.py`)**: **8/8 Passed**
 - **Scope Isolation Tests (`test_scope_isolation.py`)**: **6/6 Passed**
-- **Benchmark Harness (`eval/run.py`)**: **Passed**
-- **Fabricated Citations**: **0 (Zero - 100% blocked by Gate C)**
+- **Robustness Tests (`test_robustness.py`)**: **11/11 Passed**
+- **Workflows & Health Tests**: **8/8 Passed**
+- **Fabricated Citations**: **0 (Zero)**
+

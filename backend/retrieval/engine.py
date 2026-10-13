@@ -66,55 +66,79 @@ def rewrite_query_with_history(query: str, history: List[Dict[str, str]], groq_c
     return f"{last_user_turn} {query}".strip()
 
 
-def get_all_chunks(doc_ids: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+def get_all_chunks(
+    doc_ids: Optional[List[str]] = None,
+    user_id: Optional[str] = None,
+    matter_id: Optional[str] = None
+) -> List[Dict[str, Any]]:
     if not doc_ids:
         return []
     conn = get_db()
     cursor = conn.cursor()
     placeholders = ",".join(["?"] * len(doc_ids))
-    cursor.execute(f"""
-    SELECT c.chunk_id, c.doc_id, c.page, c.chunk_index, c.text, c.ocr, d.title as doc_title
+    params = list(doc_ids)
+
+    query = f"""
+    SELECT c.chunk_id, c.doc_id, c.page, c.chunk_index, c.text, c.ocr, d.title as doc_title, c.user_id, c.matter_id
     FROM chunks c
     JOIN documents d ON c.doc_id = d.id
     WHERE c.doc_id IN ({placeholders})
-    """, doc_ids)
+    """
+    if user_id:
+        query += " AND (c.user_id = ? OR d.user_id = ?)"
+        params.extend([user_id, user_id])
+    if matter_id:
+        query += " AND (c.matter_id = ? OR d.matter_id = ?)"
+        params.extend([matter_id, matter_id])
+
+    cursor.execute(query, params)
     rows = cursor.fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
-_chunk_embedding_cache: Dict[str, np.ndarray] = {}
-_bm25_cache: Dict[tuple, BM25Okapi] = {}
+_chunk_embedding_cache: Dict[Tuple[str, str], np.ndarray] = {}
+_bm25_cache: Dict[Tuple[str, str, tuple], BM25Okapi] = {}
 
-def get_cached_bm25(chunks: List[Dict[str, Any]]) -> BM25Okapi:
+def get_cached_bm25(chunks: List[Dict[str, Any]], user_id: str = "default_lawyer", matter_id: str = "default_matter") -> BM25Okapi:
     global _bm25_cache
-    cache_key = tuple(c["chunk_id"] for c in chunks)
+    cache_key = (user_id, matter_id, tuple(c["chunk_id"] for c in chunks))
     if cache_key in _bm25_cache:
         return _bm25_cache[cache_key]
     corpus_tokens = [c["text"].lower().split() for c in chunks]
     bm25 = BM25Okapi(corpus_tokens)
-    if len(_bm25_cache) > 30:
+    if len(_bm25_cache) > 50:
         _bm25_cache.clear()
     _bm25_cache[cache_key] = bm25
     return bm25
 
-def get_cached_chunk_embeddings(chunks: List[Dict[str, Any]], model) -> np.ndarray:
+def get_cached_chunk_embeddings(chunks: List[Dict[str, Any]], model, user_id: str = "default_lawyer") -> np.ndarray:
     global _chunk_embedding_cache
-    missing = [c for c in chunks if c["chunk_id"] not in _chunk_embedding_cache]
+    missing = [c for c in chunks if (user_id, c["chunk_id"]) not in _chunk_embedding_cache]
     if missing:
         missing_texts = [c["text"] for c in missing]
         embs = model.encode(missing_texts, convert_to_numpy=True, normalize_embeddings=True, batch_size=64, show_progress_bar=False)
         for c, emb in zip(missing, embs):
-            _chunk_embedding_cache[c["chunk_id"]] = emb
+            _chunk_embedding_cache[(user_id, c["chunk_id"])] = emb
     
-    return np.array([_chunk_embedding_cache[c["chunk_id"]] for c in chunks])
+    return np.array([_chunk_embedding_cache[(user_id, c["chunk_id"])] for c in chunks])
 
-def retrieve(query: str, doc_ids: Optional[List[str]] = None, mode: str = "hybrid_rerank", top_k: int = 8) -> List[Dict[str, Any]]:
-    chunks = get_all_chunks(doc_ids)
+def retrieve(
+    query: str, 
+    doc_ids: Optional[List[str]] = None, 
+    mode: str = "hybrid_rerank", 
+    top_k: int = 8,
+    user_id: Optional[str] = None,
+    matter_id: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    chunks = get_all_chunks(doc_ids, user_id=user_id, matter_id=matter_id)
     if not chunks:
         return []
     
-    # 1. Sparse BM25 Retrieval (Cached index)
-    bm25 = get_cached_bm25(chunks)
+    eff_user = user_id or "default_lawyer"
+    eff_matter = matter_id or "default_matter"
+    
+    # 1. Sparse BM25 Retrieval (Cached index partitioned per user & matter)
+    bm25 = get_cached_bm25(chunks, user_id=eff_user, matter_id=eff_matter)
     query_tokens = query.lower().split()
     bm25_scores = bm25.get_scores(query_tokens)
     
@@ -135,7 +159,7 @@ def retrieve(query: str, doc_ids: Optional[List[str]] = None, mode: str = "hybri
     # 2. Dense Embeddings Retrieval (Cached chunk vectors)
     try:
         model = get_dense_model()
-        chunk_embeddings = get_cached_chunk_embeddings(chunks, model)
+        chunk_embeddings = get_cached_chunk_embeddings(chunks, model, user_id=eff_user)
         query_embedding = model.encode([query], convert_to_numpy=True, normalize_embeddings=True, show_progress_bar=False)[0]
         dense_scores = np.dot(chunk_embeddings, query_embedding)
         dense_ranked_indices = np.argsort(dense_scores)[::-1]
