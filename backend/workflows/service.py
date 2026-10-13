@@ -74,9 +74,6 @@ def resolve_scope(
     if user_id:
         query += " AND user_id = ?"
         params.append(user_id)
-    if matter_id:
-        query += " AND matter_id = ?"
-        params.append(matter_id)
 
     cursor.execute(query, params)
     rows = cursor.fetchall()

@@ -52,7 +52,7 @@ def get_current_user(request: Request) -> Dict[str, Any]:
         raise HTTPException(status_code=401, detail="Session expired or invalid token. Please log in again.")
 
     user_id = payload.get("sub")
-    matter_id = payload.get("matter_id")
+    matter_id = request.headers.get("X-Matter-Id") or payload.get("matter_id")
 
     conn = get_db()
     cursor = conn.cursor()
@@ -62,13 +62,20 @@ def get_current_user(request: Request) -> Dict[str, Any]:
     WHERE id = ?
     """, (user_id,))
     row = cursor.fetchone()
-    conn.close()
 
     if not row:
+        conn.close()
         raise HTTPException(status_code=401, detail="User account not found.")
 
+    if not matter_id:
+        cursor.execute("SELECT id FROM matters WHERE user_id = ? ORDER BY created_at DESC LIMIT 1", (user_id,))
+        m_row = cursor.fetchone()
+        matter_id = m_row["id"] if m_row else f"matter_{user_id[:8]}"
+
+    conn.close()
+
     user = dict(row)
-    user["matter_id"] = matter_id or f"matter_{user_id[:8]}"
+    user["matter_id"] = matter_id
     return user
 
 def require_admin(user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:

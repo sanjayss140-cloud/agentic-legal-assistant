@@ -30,6 +30,21 @@ from backend.security.auth import (
 from backend.security.crypto import encrypt_bytes, decrypt_bytes
 from backend.security.audit import log_audit, get_audit_logs
 from backend.security.deps import get_current_user, require_admin
+from backend.workflows.lawyer_features import (
+    check_citations_and_facts,
+    build_case_chronology,
+    export_chronology_csv,
+    export_chronology_docx,
+    extract_dates_and_deadlines,
+    export_deadlines_ics,
+    compare_two_documents,
+    build_authority_table,
+    generate_formal_draft,
+    build_issue_matrix,
+    record_feedback,
+    get_feedback_records,
+    detect_and_process_indian_language,
+)
 
 router = APIRouter()
 
@@ -89,6 +104,44 @@ class DraftRequest(BaseModel):
 class ResearchRequest(BaseModel):
     issue: str
     doc_ids: Optional[List[str]] = None
+
+class CitationCheckRequest(BaseModel):
+    text: str
+    doc_ids: Optional[List[str]] = None
+
+class ChronologyRequest(BaseModel):
+    doc_ids: Optional[List[str]] = None
+    filter_keyword: Optional[str] = None
+
+class DeadlinesRequest(BaseModel):
+    doc_ids: Optional[List[str]] = None
+
+class DocCompareRequest(BaseModel):
+    doc_id_a: str
+    doc_id_b: str
+
+class AuthoritiesRequest(BaseModel):
+    doc_ids: Optional[List[str]] = None
+
+class DraftTemplateRequest(BaseModel):
+    doc_type: str
+    doc_ids: Optional[List[str]] = None
+    user_facts: Optional[Dict[str, str]] = None
+
+class IssueMatrixRequest(BaseModel):
+    doc_ids: Optional[List[str]] = None
+
+class FeedbackRequest(BaseModel):
+    rating: int
+    notes: Optional[str] = None
+    message_id: Optional[str] = None
+    prompt_version: Optional[str] = "v2.0-verified"
+    model: Optional[str] = "llama-3.3-70b-versatile"
+    retrieval_params: Optional[Dict[str, Any]] = None
+    verified_status: Optional[str] = "pass"
+
+class MultilingualDetectRequest(BaseModel):
+    text: str
 
 # ----------------- Phase 1: Authentication Endpoints -----------------
 
@@ -799,3 +852,116 @@ def eval_results():
             "total_workflows": 4
         }
     }
+
+# ----------------- Phase 2: Verified Lawyer Endpoints -----------------
+
+@router.post("/citation-check")
+def citation_checker_endpoint(req: CitationCheckRequest, user: Dict[str, Any] = Depends(get_current_user)):
+    return check_citations_and_facts(
+        text=req.text,
+        doc_ids=req.doc_ids,
+        user_id=user["id"],
+        matter_id=user.get("matter_id")
+    )
+
+@router.post("/chronology")
+def chronology_endpoint(req: ChronologyRequest, user: Dict[str, Any] = Depends(get_current_user)):
+    return build_case_chronology(
+        doc_ids=req.doc_ids,
+        user_id=user["id"],
+        matter_id=user.get("matter_id"),
+        filter_keyword=req.filter_keyword
+    )
+
+@router.get("/chronology/export/csv")
+def chronology_csv_export(user: Dict[str, Any] = Depends(get_current_user)):
+    data = build_case_chronology(user_id=user["id"], matter_id=user.get("matter_id"))
+    csv_str = export_chronology_csv(data)
+    return Response(
+        content=csv_str,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=case_chronology.csv"}
+    )
+
+@router.get("/chronology/export/docx")
+def chronology_docx_export(user: Dict[str, Any] = Depends(get_current_user)):
+    data = build_case_chronology(user_id=user["id"], matter_id=user.get("matter_id"))
+    out_file = Path(config.BASE_DIR) / "frontend" / "dist" / "case_chronology.docx"
+    export_chronology_docx(data, str(out_file))
+    return FileResponse(out_file, media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document", filename="case_chronology.docx")
+
+@router.post("/deadlines")
+def deadlines_endpoint(req: DeadlinesRequest, user: Dict[str, Any] = Depends(get_current_user)):
+    return extract_dates_and_deadlines(
+        doc_ids=req.doc_ids,
+        user_id=user["id"],
+        matter_id=user.get("matter_id")
+    )
+
+@router.get("/deadlines/export/ics")
+def deadlines_ics_export(user: Dict[str, Any] = Depends(get_current_user)):
+    data = extract_dates_and_deadlines(user_id=user["id"], matter_id=user.get("matter_id"))
+    ics_str = export_deadlines_ics(data)
+    return Response(
+        content=ics_str,
+        media_type="text/calendar",
+        headers={"Content-Disposition": "attachment; filename=matter_deadlines.ics"}
+    )
+
+@router.post("/docs/compare")
+def compare_docs_endpoint(req: DocCompareRequest, user: Dict[str, Any] = Depends(get_current_user)):
+    return compare_two_documents(
+        doc_id_a=req.doc_id_a,
+        doc_id_b=req.doc_id_b,
+        user_id=user["id"],
+        matter_id=user.get("matter_id")
+    )
+
+@router.post("/authorities")
+def authorities_endpoint(req: AuthoritiesRequest, user: Dict[str, Any] = Depends(get_current_user)):
+    return build_authority_table(
+        doc_ids=req.doc_ids,
+        user_id=user["id"],
+        matter_id=user.get("matter_id")
+    )
+
+@router.post("/draft/template")
+def draft_template_endpoint(req: DraftTemplateRequest, user: Dict[str, Any] = Depends(get_current_user)):
+    return generate_formal_draft(
+        doc_type=req.doc_type,
+        doc_ids=req.doc_ids,
+        user_facts=req.user_facts,
+        user_id=user["id"],
+        matter_id=user.get("matter_id")
+    )
+
+@router.post("/issues")
+def issues_endpoint(req: IssueMatrixRequest, user: Dict[str, Any] = Depends(get_current_user)):
+    return build_issue_matrix(
+        doc_ids=req.doc_ids,
+        user_id=user["id"],
+        matter_id=user.get("matter_id")
+    )
+
+@router.post("/feedback")
+def feedback_endpoint(req: FeedbackRequest, user: Dict[str, Any] = Depends(get_current_user)):
+    return record_feedback(
+        user_id=user["id"],
+        rating=req.rating,
+        matter_id=user.get("matter_id"),
+        message_id=req.message_id,
+        notes=req.notes,
+        prompt_version=req.prompt_version or "v2.0-verified",
+        model=req.model or "llama-3.3-70b-versatile",
+        retrieval_params=req.retrieval_params,
+        verified_status=req.verified_status or "pass"
+    )
+
+@router.get("/feedback")
+def get_feedback_endpoint(user: Dict[str, Any] = Depends(get_current_user)):
+    return {"feedback": get_feedback_records(user_id=user["id"])}
+
+@router.post("/multilingual/detect")
+def multilingual_detect_endpoint(req: MultilingualDetectRequest):
+    return detect_and_process_indian_language(req.text)
+

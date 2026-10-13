@@ -112,11 +112,28 @@
 
 ---
 
+### [x] Phase 2: Features a Lawyer Actually Needs (All Verified-Only)
+- **Status**: Completed (9/9 dedicated Phase 2 tests passing, 42/42 full test suite passing)
+- **Capabilities Delivered**:
+  - **Citation Checker**: Verifies factual statements and cited authorities against selected documents and the matter citation registry. Produces structured reports: Supported, Partially supported, Not found in provided documents, and Authority not in provided documents. Strictly adheres to rule: never claims citation is "correct law", only "found / not found in provided sources".
+  - **Case Chronology**: Extracts dated events across all matter documents and maintains separate undated material occurrences. Supports keyword filtering and valid OpenXML `.docx` and `.csv` exports (`/api/chronology/export/docx` and `/api/chronology/export/csv`).
+  - **Dates & Deadlines (Matter Calendar)**: Extracts hearing dates, filing deadlines, compliance periods, and notice periods with exact source quotes. Labeled: *"Extracted from the documents; verify before relying. The system does not compute statutory limitation periods."* Exports RFC 5545 `.ics` iCalendar files (`/api/deadlines/export/ics`).
+  - **Document Comparison**: Compares two documents (e.g. order vs petition, notice vs reply) side-by-side: parties, courts, distinct timeline dates, and monetary figures with source quotes for both documents.
+  - **Authority Table**: Generates structured table of statutes and precedents across matter documents with quote, page, relevance, and stance (relied upon vs distinguished).
+  - **Draft Templates**: 5 formal Indian legal templates: Bail Application (s. 439 CrPC / BNSS 483), Section 138 NI Act complaint, Section 138 demand notice, Consumer Complaint (CPA 2019), and Writ Petition synopsis (Article 226/32). Preserves `[MISSING: description]`, `[USER-PROVIDED]` isolation, and valid `.docx` export.
+  - **Issue Matrix**: Decomposes matter into core legal and factual issues, opposing arguments, supporting evidence with quotes, and gaps/weak spots (`[MISSING: ...]`).
+  - **Per-Answer Feedback**: Records ratings (thumbs up/down), lawyer notes, prompt version, model, retrieval parameters, and verification status in SQLite `answer_feedback` table.
+  - **Multilingual Support (Indian Languages)**: Detects Devanagari (Hindi/Marathi) and Tamil, maps vernacular terms to English legal concepts for retrieval, while verifying citations strictly against original text.
+
+---
+
 ## Test Execution Summary
-- **Pytest Suite (`backend/tests/`)**: **33 Passed in 23.34s** (0 Failed)
+- **Pytest Suite (`backend/tests/`)**: **42 Passed** (0 Failed)
 - **Phase 1 Auth & Isolation Suite (`test_phase1_auth_isolation.py`)**: **8/8 Passed**
+- **Phase 2 Lawyer Features Suite (`test_phase2_lawyer_features.py`)**: **9/9 Passed**
 - **Scope Isolation Tests (`test_scope_isolation.py`)**: **6/6 Passed**
 - **Robustness Tests (`test_robustness.py`)**: **11/11 Passed**
 - **Workflows & Health Tests**: **8/8 Passed**
 - **Fabricated Citations**: **0 (Zero)**
+
 
