@@ -570,6 +570,89 @@ def get_audit_trail(user: Dict[str, Any] = Depends(get_current_user)):
         logs = get_audit_logs(user_id=user["id"], limit=100)
     return {"audit_logs": logs}
 
+@router.get("/admin/overview")
+def get_admin_overview(admin_user: Dict[str, Any] = Depends(require_admin)):
+    """Admin dashboard: aggregated metrics and feedback without client text or names."""
+    conn = get_db()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT COUNT(*) as total FROM users")
+    total_users = cursor.fetchone()["total"]
+    cursor.execute("SELECT COUNT(*) as lawyers FROM users WHERE role = 'lawyer'")
+    lawyers_count = cursor.fetchone()["lawyers"]
+    cursor.execute("SELECT COUNT(*) as admins FROM users WHERE role = 'admin'")
+    admin_count = cursor.fetchone()["admins"]
+
+    seven_days_ago = time.time() - (7 * 86400)
+    cursor.execute("SELECT COUNT(DISTINCT user_id) as active FROM audit_logs WHERE timestamp >= ?", (seven_days_ago,))
+    active_users = cursor.fetchone()["active"]
+
+    cursor.execute("SELECT COUNT(*) as matters FROM matters")
+    matters_count = cursor.fetchone()["matters"]
+
+    cursor.execute("SELECT COUNT(*) as docs FROM documents")
+    docs_count = cursor.fetchone()["docs"]
+    cursor.execute("SELECT COUNT(*) as chks FROM chunks")
+    chunks_count = cursor.fetchone()["chks"]
+
+    cursor.execute("SELECT COUNT(*) as fb_count, SUM(CASE WHEN rating = 1 THEN 1 ELSE 0 END) as positive FROM answer_feedback")
+    fb_row = cursor.fetchone()
+    total_fb = fb_row["fb_count"] or 0
+    pos_fb = fb_row["positive"] or 0
+    neg_fb = total_fb - pos_fb
+    pos_pct = round((pos_fb / total_fb * 100), 1) if total_fb > 0 else 100.0
+
+    cursor.execute("""
+    SELECT id, rating, notes, prompt_version, model, verified_status, created_at
+    FROM answer_feedback
+    ORDER BY created_at DESC
+    LIMIT 20
+    """)
+    recent_fb = [dict(r) for r in cursor.fetchall()]
+
+    conn.close()
+
+    from backend.services.metrics import _verification_counts, _lock
+    with _lock:
+        v_counts = dict(_verification_counts)
+    gate_a_pass = v_counts.get(("gate_a", "pass"), 0)
+    gate_a_fail = v_counts.get(("gate_a", "fail"), 0)
+    gate_b_pass = v_counts.get(("gate_b", "pass"), 0)
+    gate_b_fail = v_counts.get(("gate_b", "fail"), 0)
+    gate_c_pass = v_counts.get(("gate_c", "pass"), 0)
+    gate_c_fail = v_counts.get(("gate_c", "fail"), 0)
+
+    total_verifications = gate_a_pass + gate_a_fail + gate_b_pass + gate_b_fail + gate_c_pass + gate_c_fail
+    passed_verifications = gate_a_pass + gate_b_pass + gate_c_pass
+    pass_rate_pct = round((passed_verifications / total_verifications * 100), 1) if total_verifications > 0 else 100.0
+
+    return {
+        "user_metrics": {
+            "total_users": total_users,
+            "lawyers_count": lawyers_count,
+            "admin_count": admin_count,
+            "active_users_last_7d": active_users
+        },
+        "content_metrics": {
+            "total_matters": matters_count,
+            "total_documents": docs_count,
+            "total_chunks": chunks_count
+        },
+        "verification_metrics": {
+            "overall_pass_rate_pct": pass_rate_pct,
+            "gate_a": {"pass": gate_a_pass, "fail": gate_a_fail},
+            "gate_b": {"pass": gate_b_pass, "fail": gate_b_fail},
+            "gate_c": {"pass": gate_c_pass, "fail": gate_c_fail}
+        },
+        "feedback_summary": {
+            "total_feedback": total_fb,
+            "positive_count": pos_fb,
+            "negative_count": neg_fb,
+            "positive_rating_pct": pos_pct,
+            "recent_feedback": recent_fb
+        }
+    }
+
 # ----------------- Scoped Document & Ingestion Workflows -----------------
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt"}

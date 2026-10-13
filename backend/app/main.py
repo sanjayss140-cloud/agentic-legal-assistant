@@ -34,7 +34,7 @@ app.add_middleware(StructuredLoggingMiddleware)
 def on_startup():
     recovered = recover_stale_jobs()
     if recovered > 0:
-        print(f"[LexGround Worker] Recovered {recovered} stale ingestion jobs.")
+        print(f"[Agentic Legal Assistant Worker] Recovered {recovered} stale ingestion jobs.")
 
 allowed_origins = os.getenv(
     "CORS_ORIGINS", 

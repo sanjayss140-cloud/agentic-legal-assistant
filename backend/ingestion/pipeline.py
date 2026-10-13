@@ -209,13 +209,15 @@ def classify_document_type(full_text: str, filename: str) -> Tuple[str, str, boo
         "district court", "sessions judge", "chief metropolitan magistrate", "metropolitan magistrate",
         "bail appln", "crl.m.c", "criminal appeal", "civil appeal", "special leave petition",
         "first information report", "fir no", "chargesheet", "police station", "state of", "union of india",
-        "anticipatory bail", "regular bail", "quashing of proceedings", "section 439", "section 438", "section 482", "section 138"
+        "anticipatory bail", "regular bail", "quashing of proceedings", "section 439", "section 438", "section 482", "section 138",
+        "consumer disputes redressal", "consumer commission", "consumer complaint", "district commission", "tribunal"
     ]
     anchor_hits = sum(1 for a in judicial_anchors if a in text_lower)
 
     legal_signals = [
         "court", "petitioner", "respondent", "appellant", "applicant",
-        "accused", "judgment", "fir", "crpc", "ipc", "bnss", "bns", "bail", "advocate", "affidavit"
+        "accused", "judgment", "fir", "crpc", "ipc", "bnss", "bns", "bail", "advocate", "affidavit",
+        "complainant", "opposite party", "consumer", "deficiency in service"
     ]
     legal_hits = sum(1 for s in legal_signals if s in text_lower)
     
@@ -227,6 +229,8 @@ def classify_document_type(full_text: str, filename: str) -> Tuple[str, str, boo
         c_type = "bail"
     elif "138" in text_lower or "cheque" in text_lower or "dishonour" in text_lower or "negotiable instruments" in text_lower:
         c_type = "cheque_bounce"
+    elif "consumer" in text_lower or "deficiency in service" in text_lower:
+        c_type = "consumer"
     elif any(k in text_lower for k in ["fir", "accused", "ipc", "bns", "police station", "chargesheet", "custody"]):
         c_type = "criminal"
     elif "writ" in text_lower or "article 226" in text_lower or "article 32" in text_lower:

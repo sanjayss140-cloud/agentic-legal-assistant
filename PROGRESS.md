@@ -155,8 +155,20 @@
 
 ---
 
+### [x] Phase 5: Pilot Tooling, Administration & Synthetic Regression Suite
+- **Status**: Completed (5/5 dedicated Phase 5 tests passing, 56/56 total suite passing)
+- **Capabilities Delivered**:
+  - **Pilot Firm Onboarding Automation**: `scripts/onboard_pilot_firm.py` automates firm provisioning, creates admin and lawyer accounts with secure credentials, initializes matters, and pre-loads synthetic sample cases.
+  - **Admin Usage & Feedback Overview**: Secure `GET /api/admin/overview` dashboard reporting active users (last 7 days), matters count, documents count, verification pass rate (Gate A, B, C metrics), and answer feedback summary without exposing client document text or names.
+  - **Lawyer Feedback Export**: `scripts/export_feedback.py` exports lawyer ratings and notes to standard CSV and JSON format for weekly product review.
+  - **Pilot Runbook & Governance**: `docs/PILOT_PLAN.md` with complete 4-week pilot structure, weekly check-in agendas, success criteria ($\ge 90\%$ groundedness, 0 fabricated citations), structured exit interview questions, and DPDP Act data destruction procedure.
+  - **Synthetic Regression Suite**: `backend/tests/test_pilot_regression.py` validating 5 realistic public-domain synthetic cases (Bail, Section 138 Cheque Bounce, Commercial Arbitration, Consumer Complaint, and Writ Petition) with known ground truth, zero citation fabrications, and deterministic gate enforcement.
+
+---
+
 ## Test Execution Summary
-- **Pytest Suite (`backend/tests/`)**: **51 Passed** (0 Failed)
+- **Pytest Suite (`backend/tests/`)**: **56 Passed** (0 Failed)
+- **Pilot Regression Suite (`test_pilot_regression.py`)**: **5/5 Passed**
 - **Phase 1 Auth & Isolation Suite (`test_phase1_auth_isolation.py`)**: **8/8 Passed**
 - **Phase 2 Lawyer Features Suite (`test_phase2_lawyer_features.py`)**: **9/9 Passed**
 - **Phase 3 Scale & Reliability Suite (`test_phase3_scale_reliability.py`)**: **9/9 Passed**

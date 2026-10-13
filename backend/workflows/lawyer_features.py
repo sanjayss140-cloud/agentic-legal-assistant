@@ -342,9 +342,9 @@ def extract_dates_and_deadlines(
 
     deadline_keywords = [
         ("Hearing Date", [r"listed\s+on\s*([^\.,;]+)", r"hearing\s+(?:on|fixed\s+for)\s*([^\.,;]+)", r"next\s+date\s*[:\-]?\s*([^\.,;]+)"]),
-        ("Filing Deadline", [r"within\s+(\d+\s+(?:days|weeks|months))", r"file\s+(?:reply|counter|affidavit)\s+within\s+([^\.,;]+)"]),
-        ("Compliance Period", [r"deposit\s+(?:within|amount)\s+([^\.,;]+)", r"surrender\s+within\s+([^\.,;]+)", r"comply\s+within\s+([^\.,;]+)"]),
-        ("Notice Period", [r"(\d+\s+days\s+notice)", r"notice\s+period\s+of\s+([^\.,;]+)"]),
+        ("Filing Deadline", [r"within\s+(?:the\s+)?(\d+\s+(?:days|weeks|months)[^\.,;]*)", r"file\s+(?:reply|counter|affidavit)\s+within\s+([^\.,;]+)"]),
+        ("Compliance Period", [r"deposit\s+(?:within|amount)\s+([^\.,;]+)", r"surrender\s+within\s+([^\.,;]+)", r"comply\s+within\s+([^\.,;]+)", r"expiring\s+on\s*([^\.,;]+)"]),
+        ("Notice Period", [r"(\d+\s+days\s+notice)", r"notice\s+period\s+of\s+([^\.,;]+)", r"(\d+\s+days\s+period)"]),
         ("Interim Stay Validity", [r"interim\s+order\s+extended\s+till\s+([^\.,;]+)", r"stay\s+shall\s+continue\s+till\s+([^\.,;]+)"])
     ]
 
