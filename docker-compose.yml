@@ -1,0 +1,97 @@
+version: '3.8'
+
+services:
+  # ----------------------------------------------------------------------------
+  # 1. LexGround Core Backend (FastAPI, Verification Engine, SPA Serving)
+  # ----------------------------------------------------------------------------
+  lexground-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lexground-backend
+    restart: unless-stopped
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - JWT_SECRET=${JWT_SECRET}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - DATABASE_URL=postgresql://lexground:${POSTGRES_PASSWORD}@postgres:5432/lexground
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379/0
+      - CORS_ORIGINS=${CORS_ORIGINS:-https://localhost,http://localhost}
+      - RATE_LIMIT_RPM=${RATE_LIMIT_RPM:-60}
+      - MAX_DOCS_PER_MATTER=${MAX_DOCS_PER_MATTER:-50}
+      - DAILY_TOKEN_BUDGET=${DAILY_TOKEN_BUDGET:-100000}
+    volumes:
+      - lexground_data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # ----------------------------------------------------------------------------
+  # 2. PostgreSQL Relational Database (Multi-user production store)
+  # ----------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: lexground-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=lexground
+      - POSTGRES_USER=lexground
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lexground -d lexground"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ----------------------------------------------------------------------------
+  # 3. Redis In-Memory Cache (Worker Queue & Distributed Rate Limiting)
+  # ----------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: lexground-redis
+    restart: unless-stopped
+    command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ----------------------------------------------------------------------------
+  # 4. Caddy Web Server (Reverse Proxy & Automatic Let's Encrypt HTTPS)
+  # ----------------------------------------------------------------------------
+  caddy:
+    image: caddy:2-alpine
+    container_name: lexground-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN_NAME=${DOMAIN_NAME:-localhost}
+      - ACME_EMAIL=${ACME_EMAIL:-admin@example.com}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - lexground-backend
+
+volumes:
+  lexground_data:
+  postgres_data:
+  redis_data:
+  caddy_data:
+  caddy_config:

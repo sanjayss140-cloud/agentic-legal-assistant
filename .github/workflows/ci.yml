@@ -1,0 +1,70 @@
+name: LexGround Production CI
+
+on:
+  push:
+    branches: [ master, main, production ]
+  pull_request:
+    branches: [ master, main, production ]
+
+jobs:
+  # ----------------------------------------------------------------------------
+  # 1. Backend Verification & Pytest Suite
+  # ----------------------------------------------------------------------------
+  test-backend:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install system dependencies (OCR & Document Processing)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-eng poppler-utils
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Schema Migrations Check
+        run: |
+          python -m alembic upgrade head
+          python -m alembic downgrade base
+          python -m alembic upgrade head
+
+      - name: Run Full Verification Suite (51 Tests)
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY || 'test_mock_key' }}
+          JWT_SECRET: "ci_jwt_secret_0123456789abcdef0123456789abcdef0123456789abcdef01234567"
+          ENCRYPTION_KEY: "T25lS2V5VG9SdWxlVGhlbUFsbE9uZUJpdHNDcnlwdG8="
+        run: |
+          python -m pytest backend/tests/ -v
+
+  # ----------------------------------------------------------------------------
+  # 2. Docker Container Build Verification
+  # ----------------------------------------------------------------------------
+  build-container:
+    needs: test-backend
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build production container image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: false
+          tags: lexground:latest

@@ -140,6 +140,21 @@
 
 ---
 
+### [x] Phase 4: Packaging, Deployability & Legal Architecture
+- **Status**: Completed
+- **Capabilities Delivered**:
+  - **Hardened Multi-Stage Dockerfile**: Multi-stage build (builder + minimal runner) with non-root security user (`lexground:lexground` UID 1001), pinned dependencies, automatic database migration execution on boot, and automated `HEALTHCHECK` querying `/health`.
+  - **Docker Compose Stack**: Production `docker-compose.yml` orchestrating `lexground-backend`, `postgres:16-alpine`, `redis:7-alpine`, and `caddy:2-alpine` reverse proxy with automatic Let's Encrypt HTTPS issuance and SSL renewal.
+  - **Config & Secret Generation**: Comprehensive `.env.example` documenting all production environment variables; cryptographic secret generator (`scripts/generate_secrets.py`) producing 256-bit Fernet keys, JWT secrets, and database tokens.
+  - **GitHub Actions CI Pipeline**: `.github/workflows/ci.yml` running lint checks, Alembic migration verification (up and down), full 51-test verification suite, and Docker container builds.
+  - **Deployment Guide & Automation**: Complete `DEPLOY.md` guide for single-node VPS ($10–20/mo), domain and DNS setup, UFW firewall rules, automated daily backup script (`scripts/backup.sh`), and disaster recovery restore procedure.
+  - **Pilot Legal Framework**: Indian DPDP Act 2023 compliant legal documents:
+    - `docs/PILOT_AGREEMENT.md`: Law firm terms of use, decision-support boundaries, IP ownership, liability cap.
+    - `docs/PRIVACY.md`: DPDP Act 2023 aligned privacy policy, data principal rights, zero-training LLM disclosures.
+    - `docs/CONSENT_FORM.md`: First-login consent modal affirmation text.
+
+---
+
 ## Test Execution Summary
 - **Pytest Suite (`backend/tests/`)**: **51 Passed** (0 Failed)
 - **Phase 1 Auth & Isolation Suite (`test_phase1_auth_isolation.py`)**: **8/8 Passed**
