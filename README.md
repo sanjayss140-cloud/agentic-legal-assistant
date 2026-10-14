@@ -1,4 +1,4 @@
-# LexGround: Deterministic Agentic Legal Assistant
+# Agentic Legal Assistant: Verifiable Multi-Tenant Legal Platform
 
 > **Mission**: An agentic legal assistant where every fact, quote, and legal citation is strictly verifiable. **Verifiability beats fluency.**
 
@@ -165,4 +165,4 @@ python -m pytest backend/tests/ -v
 ---
 
 ## 7. Disclaimer
-*LexGround is an agentic decision-support tool designed for legal practitioners. It does not provide legal advice.*
+*Agentic Legal Assistant is a decision-support tool designed for legal practitioners. It does not provide legal advice.*

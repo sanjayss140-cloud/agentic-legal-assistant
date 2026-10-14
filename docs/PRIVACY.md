@@ -2,18 +2,18 @@
 *(Aligned with the Digital Personal Data Protection Act, 2023 — DPDP Act 2023, India)*
 
 **Effective Date**: October 2026  
-**Applicability**: LexGround: Agentic Legal Assistant Pilot Deployment
+**Applicability**: Agentic Legal Assistant Pilot Deployment
 
 ---
 
 ### 1. Introduction & Scope
-LexGround Legal Technologies is committed to safeguarding the privacy and confidentiality of advocates, law firms, and their clients. This Privacy Policy sets out how personal data and case file documents are processed, secured, and retained when using the **LexGround: Agentic Legal Assistant** platform.
+Agentic Legal Assistant is committed to safeguarding the privacy and confidentiality of advocates, law firms, and their clients. This Privacy Policy sets out how personal data and case file documents are processed, secured, and retained when using the **Agentic Legal Assistant** platform.
 
 ---
 
 ### 2. Roles Under the DPDP Act, 2023
 - **Data Fiduciary**: The Law Firm or Advocate determining the purpose of processing client case data.
-- **Data Processor**: LexGround, acting on behalf of and under the instructions of the Data Fiduciary to perform semantic retrieval, citation verification, and petition drafting.
+- **Data Processor**: Agentic Legal Assistant platform, acting on behalf of and under the instructions of the Data Fiduciary to perform semantic retrieval, citation verification, and petition drafting.
 - **Data Principal**: The individual whose personal data is contained in the documents uploaded.
 
 ---

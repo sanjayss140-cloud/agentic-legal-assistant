@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-LexGround Secret Generator:
+Agentic Legal Assistant: Secret Generator
 Generates cryptographically secure secrets for production deployment:
 - JWT_SECRET (64-character hex)
 - ENCRYPTION_KEY (Fernet AES-256 base64)

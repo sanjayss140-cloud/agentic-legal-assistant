@@ -41,6 +41,7 @@ dist/
 # Cache & Local DBs
 *.sqlite3
 *.db
+data/
 faiss_index/
 cache/
 

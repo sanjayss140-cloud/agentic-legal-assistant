@@ -1,13 +1,13 @@
 # PILOT EVALUATION AGREEMENT
 
 **BETWEEN:**
-1. **The Provider**: LexGround Legal Technologies ("Provider")
+1. **The Provider**: Agentic Legal Assistant Technologies ("Provider")
 2. **The Participant**: The Law Firm or Advocate accepting this Agreement ("Pilot Partner")
 
 ---
 
 ### 1. Purpose of the Pilot
-The Provider has developed an artificial intelligence decision-support platform known as **LexGround: Agentic Legal Assistant** (the "Platform"). The Pilot Partner agrees to test and evaluate the Platform in a private pilot environment solely to assess its workflow utility and verifiable drafting capabilities.
+The Provider has developed an artificial intelligence decision-support platform known as **Agentic Legal Assistant** (the "Platform"). The Pilot Partner agrees to test and evaluate the Platform in a private pilot environment solely to assess its workflow utility and verifiable drafting capabilities.
 
 ---
 

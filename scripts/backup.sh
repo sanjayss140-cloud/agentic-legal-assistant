@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# LexGround Automated Backup Script
+# Agentic Legal Assistant Automated Backup Script
 # Performs PostgreSQL database dump and encrypted document volume snapshot
 # ==============================================================================
 
