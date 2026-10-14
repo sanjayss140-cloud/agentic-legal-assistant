@@ -5,7 +5,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110.0-009688.svg?logo=fastapi)](https://fastapi.tiangolo.com)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg?logo=python)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Status: Certified](https://img.shields.io/badge/Status-19%2F19%20Tests%20Passing-success.svg)](#test-suite)
+[![Status: Certified](https://img.shields.io/badge/Status-56%2F56%20Tests%20Passing-success.svg)](#test-suite)
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/sanjayss140-cloud/agentic-legal-assistant)
 [![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/template/new?template=https://github.com/sanjayss140-cloud/agentic-legal-assistant)
