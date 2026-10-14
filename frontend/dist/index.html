@@ -932,12 +932,12 @@
         refreshHistory();
       }
 
-      const lower = text.toLowerCase();
-      const compareActive = document.getElementById('compare-checkbox').checked;
-      const selectedDocIds = getSelectedDocIds();
-      const docPayload = selectedDocIds.length > 0 ? selectedDocIds : null;
-
       try {
+        const lower = text.toLowerCase();
+        const compareCheckbox = document.getElementById('compare-checkbox');
+        const compareActive = compareCheckbox ? Boolean(compareCheckbox.checked) : false;
+        const selectedDocIds = getSelectedDocIds();
+        const docPayload = selectedDocIds.length > 0 ? selectedDocIds : null;
         if (lower.includes('review') || lower.includes('case review')) {
           const res = await fetch('/api/review', { 
             method: 'POST', 
