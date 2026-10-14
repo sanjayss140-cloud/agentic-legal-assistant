@@ -7,6 +7,20 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Status: Certified](https://img.shields.io/badge/Status-19%2F19%20Tests%20Passing-success.svg)](#test-suite)
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/sanjayss140-cloud/agentic-legal-assistant)
+[![Deploy on Railway](https://railway.com/button.svg)](https://railway.com/template/new?template=https://github.com/sanjayss140-cloud/agentic-legal-assistant)
+[![Deploy to Koyeb](https://www.koyeb.com/static/images/deploy/button.svg)](https://app.koyeb.com/deploy?type=git&repository=github.com/sanjayss140-cloud/agentic-legal-assistant&branch=main&name=agentic-legal-assistant)
+
+---
+
+## ⚡ 1-Click Permanent Cloud Deployment (24/7 Online)
+
+Deploy a permanent, 24/7 online production instance with automated HTTPS, zero local machine dependencies, and instant cloud scalability:
+
+1. **[Deploy to Render (Free 24/7 Cloud)](https://render.com/deploy?repo=https://github.com/sanjayss140-cloud/agentic-legal-assistant)**: Click the button above, sign in with GitHub, enter your `GROQ_API_KEY`, and Render will build and host your permanent `https://agentic-legal-assistant.onrender.com` URL automatically.
+2. **[Deploy on Railway](https://railway.com/template/new?template=https://github.com/sanjayss140-cloud/agentic-legal-assistant)**: Deploy directly from your GitHub repository using Docker.
+3. **[Deploy to Koyeb](https://app.koyeb.com/deploy?type=git&repository=github.com/sanjayss140-cloud/agentic-legal-assistant&branch=main&name=agentic-legal-assistant)**: Global edge container hosting with automated health checks.
+
 ---
 
 ## 1. System Architecture

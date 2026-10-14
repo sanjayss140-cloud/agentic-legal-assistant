@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: agentic-legal-assistant
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: PORT
+        value: 8000
+      - key: GROQ_API_KEY
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ENCRYPTION_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        value: sqlite:////app/data/lexground.db
+      - key: RATE_LIMIT_RPM
+        value: 120
+      - key: MAX_DOCS_PER_MATTER
+        value: 50
+      - key: DAILY_TOKEN_BUDGET
+        value: 200000
+      - key: CORS_ORIGINS
+        value: "*"
