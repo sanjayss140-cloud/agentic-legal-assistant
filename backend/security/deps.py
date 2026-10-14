@@ -45,6 +45,11 @@ def get_current_user(request: Request) -> Dict[str, Any]:
                 "mask_pii_enabled": 0,
                 "retention_days": 0
             }
+        if "X-Matter-Id" in request.headers:
+            user_matter = request.headers["X-Matter-Id"]
+            u = dict(DEFAULT_PILOT_USER)
+            u["matter_id"] = user_matter
+            return u
         return DEFAULT_PILOT_USER
 
     payload = decode_token(token)
