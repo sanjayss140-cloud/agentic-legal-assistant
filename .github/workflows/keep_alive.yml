@@ -1,4 +1,4 @@
-name: Keep ALA Alive (Render 24/7 Zero Latency)
+name: Keep Legal Assistant Alive (Render 24/7 Zero Latency)
 
 on:
   schedule:
@@ -12,4 +12,4 @@ jobs:
     steps:
       - name: Ping Keep-Alive and Health Endpoints
         run: |
-          curl -s -f https://ala.onrender.com/ping || curl -s -f https://ala.onrender.com/health || echo "Ping dispatched"
+          curl -s -f https://legalasistant.onrender.com/ping || curl -s -f https://legalasistant.onrender.com/health || echo "Ping dispatched"
