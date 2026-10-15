@@ -312,7 +312,9 @@ def extract_metadata(full_text: str, filename: str) -> Dict[str, str]:
     # Parties regex
     p_matter = re.search(r"IN\s+THE\s+MATTER\s+OF:\s*([^\n\r]+?)(?:\s+vs\.?\s+|\s+VERSUS\s+)([^\n\r]+)", first_pages_text, re.IGNORECASE)
     if p_matter:
-        meta["parties"] = f"{re.sub(r'\s+', ' ', p_matter.group(1).strip())} vs {re.sub(r'\s+', ' ', p_matter.group(2).strip())}"
+        p1 = re.sub(r"\s+", " ", p_matter.group(1).strip())
+        p2 = re.sub(r"\s+", " ", p_matter.group(2).strip())
+        meta["parties"] = f"{p1} vs {p2}"
     else:
         cause_title = re.search(r"([A-Z\s\.\,\(\)\&]{3,60}?)(?:\s*\.\.\.\s*(?:APPELLANT|PETITIONER|APPLICANT|ACCUSED|AP)[^\n\r]*)?\s+(?:VERSUS|VS\.?)\s+([A-Z\s\.\,\(\)\&]{3,60}?)(?:\s*\.\.\.\s*(?:RESPONDENT|STATE|DEFENDANT|RE)[^\n\r]*)?(?:\n|\r|$)", first_pages_text)
         if cause_title:

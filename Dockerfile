@@ -62,14 +62,14 @@ ENV PYTHONUNBUFFERED=1 \
     DATABASE_PATH=/app/data/lexground.db \
     CORPUS_DIR=/app/data/corpus \
     SECRETS_DIR=/app/data/secrets \
-    PORT=8000 \
+    PORT=10000 \
     HOST=0.0.0.0
 
-EXPOSE 8000
+EXPOSE 10000
 
 # Container healthcheck querying API health
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD curl -f http://127.0.0.1:8000/health || exit 1
+    CMD curl -f http://127.0.0.1:${PORT:-10000}/health || exit 1
 
 # Production startup command: run migrations then launch uvicorn
-CMD ["sh", "-c", "python -m alembic upgrade head && uvicorn backend.app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 2"]
+CMD ["sh", "-c", "python -m alembic upgrade head && uvicorn backend.app.main:app --host 0.0.0.0 --port ${PORT:-10000} --workers 1"]
