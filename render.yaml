@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: agentic-legal-assistant
+    name: ala
     runtime: docker
     plan: free
     region: oregon
@@ -9,6 +9,8 @@ services:
     envVars:
       - key: PORT
         value: 8000
+      - key: RENDER_EXTERNAL_URL
+        value: https://ala.onrender.com
       - key: GROQ_API_KEY
         sync: false
       - key: JWT_SECRET

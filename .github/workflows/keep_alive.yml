@@ -1,0 +1,15 @@
+name: Keep ALA Alive (Render 24/7 Zero Latency)
+
+on:
+  schedule:
+    # Ping every 10 minutes so Render free tier container never sleeps
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Keep-Alive and Health Endpoints
+        run: |
+          curl -s -f https://ala.onrender.com/ping || curl -s -f https://ala.onrender.com/health || echo "Ping dispatched"

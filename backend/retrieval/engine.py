@@ -15,6 +15,11 @@ _cross_encoder_model = None
 def get_dense_model():
     global _dense_model
     if _dense_model is None:
+        try:
+            import torch
+            torch.set_num_threads(1)
+        except Exception:
+            pass
         from sentence_transformers import SentenceTransformer
         _dense_model = SentenceTransformer(config.EMBEDDING_MODEL_NAME)
     return _dense_model
@@ -22,6 +27,11 @@ def get_dense_model():
 def get_cross_encoder():
     global _cross_encoder_model
     if _cross_encoder_model is None:
+        try:
+            import torch
+            torch.set_num_threads(1)
+        except Exception:
+            pass
         from sentence_transformers import CrossEncoder
         _cross_encoder_model = CrossEncoder(config.RERANKER_MODEL_NAME)
     return _cross_encoder_model

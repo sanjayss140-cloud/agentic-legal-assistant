@@ -30,15 +30,37 @@ app = FastAPI(
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(StructuredLoggingMiddleware)
 
+async def _self_keep_alive_worker():
+    """
+    Continuous heartbeat loop: Sends an outbound HTTP request to the public URL
+    every 7 minutes so Render's 15-minute inactivity timer never triggers sleep.
+    """
+    import asyncio, httpx
+    # Wait 60s after startup before first ping
+    await asyncio.sleep(60)
+    public_url = os.environ.get("RENDER_EXTERNAL_URL", "https://ala.onrender.com")
+    ping_url = f"{public_url.rstrip('/')}/ping"
+    while True:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                res = await client.get(ping_url, headers={"User-Agent": "ALA-KeepAlive-Heartbeat/1.0"})
+                print(f"[Keep-Alive] Pinged {ping_url} -> {res.status_code}")
+        except Exception as exc:
+            print(f"[Keep-Alive] Ping note: {exc}")
+        # 420 seconds = 7 minutes
+        await asyncio.sleep(420)
+
 @app.on_event("startup")
-def on_startup():
+async def on_startup():
     recovered = recover_stale_jobs()
     if recovered > 0:
         print(f"[Agentic Legal Assistant Worker] Recovered {recovered} stale ingestion jobs.")
+    import asyncio
+    asyncio.create_task(_self_keep_alive_worker())
 
 allowed_origins = os.getenv(
     "CORS_ORIGINS", 
-    "http://localhost:3000,http://127.0.0.1:3000,http://localhost:5173,http://127.0.0.1:5173,http://localhost:8000,http://127.0.0.1:8000"
+    "*"
 ).split(",")
 
 app.add_middleware(
@@ -51,6 +73,12 @@ app.add_middleware(
 
 # Include API Router
 app.include_router(api_router, prefix="/api")
+
+@app.get("/ping")
+def ping():
+    """Ultra-fast, zero-overhead endpoint for keep-alive pings to prevent Render sleep."""
+    import time
+    return {"status": "alive", "timestamp": time.time(), "app": "Agentic Legal Assistant"}
 
 @app.get("/health")
 def health_check():

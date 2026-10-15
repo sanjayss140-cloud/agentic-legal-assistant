@@ -53,6 +53,9 @@ RUN mkdir -p /app/data/corpus /app/data/secrets && \
 # Run as non-root user
 USER lexground
 
+# Pre-cache embedding weights for 0s instant cold-start
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-small-en-v1.5')"
+
 # Environment defaults
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
