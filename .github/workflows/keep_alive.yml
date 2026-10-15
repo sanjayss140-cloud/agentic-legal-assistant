@@ -12,4 +12,4 @@ jobs:
     steps:
       - name: Ping Keep-Alive and Health Endpoints
         run: |
-          curl -s -f https://legalasistant.onrender.com/ping || curl -s -f https://legalasistant.onrender.com/health || echo "Ping dispatched"
+          curl -s -f https://legalasister.onrender.com/ping || curl -s -f https://legalasister.onrender.com/health || echo "Ping dispatched"

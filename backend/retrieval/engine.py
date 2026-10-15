@@ -1,7 +1,8 @@
+from __future__ import annotations
 import time
 import math
 import sqlite3
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from rank_bm25 import BM25Okapi
 import numpy as np
 from backend.ingestion.pipeline import get_db

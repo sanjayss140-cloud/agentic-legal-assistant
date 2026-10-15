@@ -38,7 +38,7 @@ async def _self_keep_alive_worker():
     import asyncio, httpx
     # Wait 60s after startup before first ping
     await asyncio.sleep(60)
-    public_url = os.environ.get("RENDER_EXTERNAL_URL", "https://legalasistant.onrender.com")
+    public_url = os.environ.get("RENDER_EXTERNAL_URL", "https://legalasister.onrender.com")
     ping_url = f"{public_url.rstrip('/')}/ping"
     while True:
         try:
