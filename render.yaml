@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: legalasister
+    name: legalasistant
     runtime: docker
     plan: free
     region: oregon
@@ -10,7 +10,7 @@ services:
       - key: PORT
         value: 10000
       - key: RENDER_EXTERNAL_URL
-        value: https://legalasister.onrender.com
+        value: https://legalasistant.onrender.com
       - key: GROQ_API_KEY
         sync: false
       - key: JWT_SECRET
