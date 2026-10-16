@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="theme-color" content="#050505" />
   <title>Agentic Legal Assistant</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -540,6 +543,319 @@
       font-weight: 500;
       font-size: 13.5px;
     }
+
+    /* Mobile Menu Button - default hidden on desktop */
+    .mobile-menu-btn {
+      display: none;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid var(--border);
+      color: #FFF;
+      border-radius: 8px;
+      width: 36px;
+      height: 36px;
+      min-width: 36px;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .mobile-menu-btn:hover {
+      background: rgba(255, 255, 255, 0.16);
+      border-color: var(--border-strong);
+    }
+
+    .sidebar-mobile-header {
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .icon-btn-close {
+      background: none;
+      border: none;
+      color: var(--muted);
+      font-size: 18px;
+      cursor: pointer;
+      padding: 4px 8px;
+      line-height: 1;
+    }
+    .icon-btn-close:hover { color: #FFF; }
+
+    #sidebar-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.70);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      z-index: 99;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s ease;
+    }
+    #sidebar-backdrop.active {
+      display: block;
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    #drawer-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.65);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      z-index: 101;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s ease;
+    }
+    #drawer-backdrop.active {
+      display: block;
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .bottom-sheet-drag-handle {
+      display: none;
+      width: 40px;
+      height: 4px;
+      background: rgba(255, 255, 255, 0.3);
+      border-radius: 2px;
+      margin: 0 auto 10px auto;
+    }
+
+    /* Comparison layout */
+    .compare-wrap {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin: 10px 0;
+    }
+    .compare-side {
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+    }
+    .compare-side.highlight {
+      border-color: rgba(255, 255, 255, 0.3);
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    /* Responsive Breakpoint: Mobile & Tablets (< 768px) */
+    @media (max-width: 768px) {
+      body {
+        height: 100dvh;
+        height: -webkit-fill-available;
+        overflow: hidden;
+      }
+
+      #layout {
+        padding: 8px 12px;
+        gap: 0;
+        height: 100dvh;
+        height: -webkit-fill-available;
+        width: 100%;
+      }
+
+      .mobile-menu-btn {
+        display: flex;
+      }
+
+      .sidebar-mobile-header {
+        display: flex;
+      }
+
+      #sidebar {
+        position: fixed;
+        top: 0;
+        bottom: 0;
+        left: -320px;
+        width: 290px;
+        max-width: 82vw;
+        height: 100dvh;
+        border-radius: 0 16px 16px 0;
+        background: rgba(12, 12, 14, 0.96);
+        backdrop-filter: blur(24px);
+        -webkit-backdrop-filter: blur(24px);
+        z-index: 100;
+        box-shadow: 6px 0 30px rgba(0, 0, 0, 0.8);
+        transition: left 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+        padding-top: max(16px, env(safe-area-inset-top));
+        padding-bottom: max(16px, env(safe-area-inset-bottom));
+      }
+      #sidebar.open {
+        left: 0;
+      }
+
+      #chat-col {
+        max-width: 100%;
+        width: 100%;
+        height: 100%;
+      }
+
+      .top-header {
+        padding: 4px 0 10px 0;
+        margin-bottom: 8px;
+      }
+
+      .app-brand {
+        font-size: 14px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .header-badges {
+        gap: 6px;
+      }
+      .metric-badge {
+        padding: 3px 7px;
+        font-size: 11px;
+      }
+      #claims-badge, #fab-badge {
+        display: none; /* Keep mobile header clean and uncluttered */
+      }
+
+      #messages-area {
+        padding-right: 2px;
+        gap: 14px;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      #history-box, #docs-box {
+        -webkit-overflow-scrolling: touch;
+      }
+
+      .empty-hero {
+        margin-top: 14px;
+        gap: 6px;
+      }
+      .hero-title {
+        font-size: 21px;
+      }
+      .hero-sub {
+        font-size: 12.5px;
+        margin-bottom: 12px;
+      }
+
+      .cards-grid {
+        grid-template-columns: 1fr;
+        gap: 8px;
+        max-width: 100%;
+      }
+      .action-card {
+        padding: 10px 12px;
+        border-radius: 10px;
+      }
+      .action-card strong {
+        font-size: 13px;
+        margin-bottom: 2px;
+      }
+      .action-card p {
+        font-size: 11.5px;
+      }
+
+      .msg-group.user {
+        max-width: 92%;
+      }
+      .user-bubble {
+        padding: 9px 13px;
+        font-size: 14px;
+        border-radius: 12px;
+        word-break: break-word;
+        overflow-wrap: break-word;
+      }
+
+      .assistant-strip {
+        padding: 14px 14px;
+        font-size: 14px;
+        border-radius: 12px;
+        line-height: 1.6;
+        max-width: 100%;
+        word-break: break-word;
+        overflow-wrap: break-word;
+      }
+
+      .compare-wrap {
+        grid-template-columns: 1fr;
+        gap: 10px;
+      }
+
+      .bottom-sheet-drag-handle {
+        display: block;
+      }
+
+      /* Native-like Mobile Bottom Sheet for Citations */
+      #source-drawer {
+        top: auto;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        width: 100%;
+        max-height: 82dvh;
+        height: auto;
+        border-radius: 20px 20px 0 0;
+        transform: translateY(105%);
+        transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+        z-index: 102;
+        box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.8);
+        padding: 16px;
+        padding-bottom: max(16px, env(safe-area-inset-bottom));
+      }
+      #source-drawer.open {
+        right: 0;
+        transform: translateY(0);
+      }
+
+      /* Mobile Composer & Input */
+      #composer-wrap {
+        margin-top: 4px;
+        gap: 6px;
+        padding-bottom: max(4px, env(safe-area-inset-bottom));
+      }
+
+      .chip-row {
+        overflow-x: auto;
+        padding-bottom: 4px;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+        flex-wrap: nowrap;
+      }
+      .chip-row::-webkit-scrollbar {
+        display: none;
+      }
+      .prefill-chip {
+        white-space: nowrap;
+        font-size: 11px;
+        padding: 4px 10px;
+      }
+
+      .composer-box {
+        padding: 5px 8px;
+        border-radius: 24px;
+        gap: 6px;
+      }
+      #chat-input {
+        font-size: 16px; /* Prevents iOS Safari auto-zoom */
+        padding: 6px 4px;
+      }
+      .composer-icon-btn {
+        width: 38px;
+        height: 38px;
+        min-width: 38px;
+      }
+
+      .footer-note {
+        font-size: 9.5px;
+        line-height: 1.3;
+      }
+    }
   </style>
 </head>
 <body>
@@ -548,9 +864,17 @@
   <div class="page-gradient"></div>
 
   <div id="layout">
-    <!-- Left Sidebar: 260px thin glass -->
+    <!-- Backdrop overlay for mobile drawer -->
+    <div id="sidebar-backdrop" onclick="closeMobileSidebar()"></div>
+    <div id="drawer-backdrop" onclick="closeDrawer()"></div>
+
+    <!-- Left Sidebar: 260px thin glass / slide-in drawer on mobile -->
     <aside id="sidebar">
-      <button class="new-chat-btn" onclick="startFreshChat()">+ New Chat</button>
+      <div class="sidebar-mobile-header">
+        <span>📁 Case Files & History</span>
+        <button class="icon-btn-close" onclick="closeMobileSidebar()" aria-label="Close Sidebar">✕</button>
+      </div>
+      <button class="new-chat-btn" onclick="startFreshChat(); closeMobileSidebar();">+ New Chat</button>
 
       <div class="sidebar-label">Recent Conversations</div>
       <div id="history-box">
@@ -564,14 +888,23 @@
 
       <input type="file" id="file-uploader" accept=".pdf,.docx,.txt" multiple style="display: none;" onchange="handleDocUpload(event)" />
       <button class="upload-action-btn" onclick="document.getElementById('file-uploader').click()">+ Upload Documents</button>
-      <button class="upload-action-btn" style="margin-top: 6px; border-style: solid; font-size: 11.5px;" onclick="loadSampleCase()">Load sample case (cached)</button>
+      <button class="upload-action-btn" style="margin-top: 6px; border-style: solid; font-size: 11.5px;" onclick="loadSampleCase(); closeMobileSidebar();">Load sample case (cached)</button>
       <button class="upload-action-btn" style="margin-top: 6px; border-color: rgba(255,100,100,0.3); color: #ff9999; font-size: 11.5px;" onclick="clearAllData()">Clear all data</button>
     </aside>
 
     <!-- Center Chat Column: max-width 760px, transparent -->
     <main id="chat-col">
       <header class="top-header">
-        <div class="app-brand">Agentic Legal Assistant</div>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <button id="mobile-menu-btn" class="mobile-menu-btn" onclick="toggleMobileSidebar()" aria-label="Open Case Files">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="3" y1="12" x2="21" y2="12"></line>
+              <line x1="3" y1="6" x2="21" y2="6"></line>
+              <line x1="3" y1="18" x2="21" y2="18"></line>
+            </svg>
+          </button>
+          <div class="app-brand">Agentic Legal Assistant</div>
+        </div>
         <div class="header-badges">
           <button class="metric-badge" style="cursor: pointer; background: rgba(255,255,255,0.08); font-weight: 500;" onclick="openEvalModal()">📊 Evaluation</button>
           <span class="metric-badge" id="claims-badge">Verified claims: --</span>
@@ -628,9 +961,10 @@
 
     <!-- Slide-over Drawer for Source Quote Verification -->
     <aside id="source-drawer">
+      <div class="bottom-sheet-drag-handle"></div>
       <div style="display: flex; justify-content: space-between; align-items: center;">
         <span style="font-size: 12px; font-weight: 600; text-transform: uppercase;">Source Document Proof</span>
-        <button style="background: none; border: none; color: #FFF; font-size: 16px; cursor: pointer;" onclick="closeDrawer()">✕</button>
+        <button style="background: none; border: none; color: #FFF; font-size: 18px; cursor: pointer; padding: 2px 6px;" onclick="closeDrawer()" aria-label="Close Source Proof">✕</button>
       </div>
       <div id="drawer-source-meta" style="font-size: 12px; color: var(--muted);"></div>
       <div>
@@ -644,6 +978,31 @@
   </div>
 
   <script>
+    function toggleMobileSidebar() {
+      const sb = document.getElementById('sidebar');
+      const bd = document.getElementById('sidebar-backdrop');
+      if (sb.classList.contains('open')) {
+        closeMobileSidebar();
+      } else {
+        sb.classList.add('open');
+        bd.classList.add('active');
+      }
+    }
+
+    function closeMobileSidebar() {
+      const sb = document.getElementById('sidebar');
+      const bd = document.getElementById('sidebar-backdrop');
+      if (sb) sb.classList.remove('open');
+      if (bd) bd.classList.remove('active');
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        closeDrawer();
+        closeMobileSidebar();
+      }
+    });
+
     let guestMatterId = localStorage.getItem('guest_matter_id');
     if (!guestMatterId) {
       guestMatterId = 'mat_guest_' + Math.random().toString(36).substring(2, 10);
@@ -888,10 +1247,12 @@
     }
 
     function loadHistorySession(idx) {
+      closeMobileSidebar();
       // Switch active session view
     }
 
     function startFreshChat() {
+      closeMobileSidebar();
       document.getElementById('messages-area').innerHTML = `
         <div class="empty-hero" id="empty-view">
           <h1 class="hero-title">Agentic Legal Assistant</h1>
@@ -920,6 +1281,7 @@
     }
 
     function runAction(prompt) {
+      closeMobileSidebar();
       document.getElementById('chat-input').value = prompt;
       executeSend();
     }
@@ -1248,6 +1610,7 @@
     }
 
     async function openEvalModal() {
+      closeMobileSidebar();
       try {
         const res = await fetch('/api/eval/results');
         const data = await res.json();
@@ -1264,23 +1627,26 @@
 
         const summary = data.metrics_summary || {};
         const html = `
-          <div style="background: rgba(15,15,15,0.95); border: 1px solid var(--border-strong); border-radius: 12px; padding: 20px; font-size: 13px;">
+          <div style="background: rgba(15,15,15,0.95); border: 1px solid var(--border-strong); border-radius: 12px; padding: 16px; font-size: 13px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-              <h3 style="font-size: 16px;">Live Empirical Evaluation Harness</h3>
+              <h3 style="font-size: 15px; margin: 0;">Live Empirical Evaluation Harness</h3>
+              <button class="icon-btn-close" onclick="this.closest('.msg-group').remove()" aria-label="Dismiss evaluation">✕</button>
             </div>
-            <p style="color: var(--muted); margin-bottom: 12px;">Measured results across judicial evaluation suite comparing plain RAG baseline vs Agentic Legal Assistant 3-Gate verifier:</p>
-            <table style="width: 100%; border-collapse: collapse; margin-bottom: 14px;">
-              <thead>
-                <tr style="background: rgba(255,255,255,0.05); text-align: left;">
-                  <th style="padding: 6px; border: 1px solid rgba(255,255,255,0.1);">#</th>
-                  <th style="padding: 6px; border: 1px solid rgba(255,255,255,0.1);">Query</th>
-                  <th style="padding: 6px; border: 1px solid rgba(255,255,255,0.1);">Baseline Grounded</th>
-                  <th style="padding: 6px; border: 1px solid rgba(255,255,255,0.1);">Assistant Grounded</th>
-                  <th style="padding: 6px; border: 1px solid rgba(255,255,255,0.1);">Fabrications</th>
-                </tr>
-              </thead>
-              <tbody>${rows}</tbody>
-            </table>
+            <p style="color: var(--muted); margin-bottom: 12px; font-size: 12.5px;">Measured results across judicial evaluation suite comparing plain RAG baseline vs Agentic Legal Assistant 3-Gate verifier:</p>
+            <div style="overflow-x: auto; -webkit-overflow-scrolling: touch; margin-bottom: 14px;">
+              <table style="width: 100%; min-width: 440px; border-collapse: collapse;">
+                <thead>
+                  <tr style="background: rgba(255,255,255,0.05); text-align: left;">
+                    <th style="padding: 6px; border: 1px solid rgba(255,255,255,0.1);">#</th>
+                    <th style="padding: 6px; border: 1px solid rgba(255,255,255,0.1);">Query</th>
+                    <th style="padding: 6px; border: 1px solid rgba(255,255,255,0.1);">Baseline Grounded</th>
+                    <th style="padding: 6px; border: 1px solid rgba(255,255,255,0.1);">Assistant Grounded</th>
+                    <th style="padding: 6px; border: 1px solid rgba(255,255,255,0.1);">Fabrications</th>
+                  </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+              </table>
+            </div>
             <div style="font-size: 12px; color: var(--muted);">
               Baseline Avg: <strong>${summary.avg_baseline_groundedness || 42}%</strong> | Assistant Avg: <strong>${summary.avg_assistant_groundedness || 60}%</strong> | Fabricated: <strong>0</strong>
             </div>
@@ -1304,12 +1670,16 @@
 
     function showSource(doc, page, quote) {
       document.getElementById('source-drawer').classList.add('open');
+      const db = document.getElementById('drawer-backdrop');
+      if (db) db.classList.add('active');
       document.getElementById('drawer-source-meta').innerText = `${doc} (Page ${page})`;
       document.getElementById('drawer-quote-box').innerText = `"${quote}"`;
     }
 
     function closeDrawer() {
       document.getElementById('source-drawer').classList.remove('open');
+      const db = document.getElementById('drawer-backdrop');
+      if (db) db.classList.remove('active');
     }
 
     function escapeHtml(s) {
