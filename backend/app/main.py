@@ -55,8 +55,9 @@ async def on_startup():
     recovered = recover_stale_jobs()
     if recovered > 0:
         print(f"[Agentic Legal Assistant Worker] Recovered {recovered} stale ingestion jobs.")
-    import asyncio
-    asyncio.create_task(_self_keep_alive_worker())
+    if os.environ.get("ENABLE_KEEP_ALIVE", "false").lower() in ("true", "1"):
+        import asyncio
+        asyncio.create_task(_self_keep_alive_worker())
 
 allowed_origins = os.getenv(
     "CORS_ORIGINS", 
