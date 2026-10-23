@@ -1647,9 +1647,9 @@
       strip.innerHTML = `
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
           <h3 style="font-size: 16px; font-weight: 600;">Formal Legal Petition: ${escapeHtml(data.doc_type || 'Draft')}</h3>
-          <a href="draft.docx" download class="new-chat-btn" style="width: auto; padding: 5px 14px; font-size: 12px; text-decoration: none;">⬇ Download DOCX</a>
+          <button onclick="downloadDraftPetition(this)" class="new-chat-btn" style="width: auto; padding: 5px 14px; font-size: 12px; cursor: pointer;">⬇ Download Petition</button>
         </div>
-        <div style="background: rgba(0,0,0,0.45); border: 1px solid var(--border); border-radius: 10px; padding: 18px; font-family: 'Georgia', serif; font-size: 14px; line-height: 1.8; white-space: pre-wrap; color: #FFF;">${escapeHtml(data.draft_text)}</div>
+        <div class="draft-content-text" style="background: rgba(0,0,0,0.45); border: 1px solid var(--border); border-radius: 10px; padding: 18px; font-family: 'Georgia', serif; font-size: 14px; line-height: 1.8; white-space: pre-wrap; color: #FFF;">${escapeHtml(data.draft_text)}</div>
         <div class="answer-metrics" style="flex-direction: column; align-items: flex-start; gap: 4px;">
           <div>
             <span>Grounded <strong>${data.groundedness_score}%</strong></span> • <span>Placeholders: <strong>${(data.missing_placeholders || []).length}</strong></span> • <span>Fabricated citations: <strong>0</strong></span>
@@ -1659,6 +1659,16 @@
           </div>
         </div>
       `;
+    }
+
+    function downloadDraftPetition(btn) {
+      const draftBox = btn.closest('.assistant-strip').querySelector('.draft-content-text');
+      const text = draftBox ? draftBox.innerText : "Formal Legal Petition";
+      const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'formal_legal_petition.txt';
+      a.click();
     }
 
     // Render Research inside chat
